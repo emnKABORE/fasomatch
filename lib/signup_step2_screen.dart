@@ -6,6 +6,12 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'signup_draft.dart';
+import 'ui/app_colors.dart';
+import 'ui/app_logo.dart';
+import 'ui/primary_button.dart';
+import 'ui/birthdate_picker_field.dart';
+
+// (tu l'as déjà normalement)
 import 'ui/faso_loading_overlay.dart';
 
 class SignupStep2Screen extends StatefulWidget {
@@ -29,7 +35,6 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
   Timer? _verifyTimer;
   int _verifyTicks = 0;
 
-  late final TextEditingController _birthCtrl;
   late final TextEditingController _bioCtrl;
 
   XFile? _photo1;
@@ -39,25 +44,14 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
   @override
   void initState() {
     super.initState();
-    _birthCtrl = TextEditingController(
-      text: _formatBirthdate(widget.draft.birthdate),
-    );
     _bioCtrl = TextEditingController(text: widget.draft.bio);
   }
 
   @override
   void dispose() {
     _verifyTimer?.cancel();
-    _birthCtrl.dispose();
     _bioCtrl.dispose();
     super.dispose();
-  }
-
-  String _formatBirthdate(DateTime? d) {
-    if (d == null) return "";
-    return "${d.day.toString().padLeft(2, '0')}/"
-        "${d.month.toString().padLeft(2, '0')}/"
-        "${d.year}";
   }
 
   int _ageFrom(DateTime date) {
@@ -72,41 +66,6 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
   void _show(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
-  InputDecoration _deco(String hint) => InputDecoration(
-    hintText: hint,
-    filled: true,
-    fillColor: Colors.white.withOpacity(0.75),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: Colors.black54, width: 1.2),
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: Colors.black54, width: 1.2),
-    ),
-  );
-
-  Future<void> _pickBirthdate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime(now.year - 20, 1, 1),
-      firstDate: DateTime(1900),
-      lastDate: now,
-    );
-
-    if (picked == null) return;
-
-    setState(() {
-      widget.draft.birthdate = picked;
-      _birthCtrl.text = _formatBirthdate(picked);
-    });
-
-    final age = _ageFrom(picked);
-    if (age < 18) _show("⛔ Tu dois avoir 18 ans minimum.");
   }
 
   Future<void> _pickImage(int index) async {
@@ -149,13 +108,14 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       fileOptions: const FileOptions(upsert: true),
     );
 
-    return supabase.storage.from('profile-photos').getPublicUrl(path);
+    final publicUrl = supabase.storage.from('profile-photos').getPublicUrl(path);
+    return publicUrl;
   }
 
   Future<void> _createAccountAndProfile() async {
     final d = widget.draft;
-
     final receivedUserId = widget.userId;
+
     if (receivedUserId == null) {
       _show("Erreur utilisateur. Recommence l'inscription.");
       return;
@@ -229,7 +189,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       });
 
       _show("✅ Profil enregistré !");
-      // TODO: Navigator.pushReplacement(...)
+      // TODO: Navigator push home
 
     } on PostgrestException catch (e) {
       _show("❌ DB error: ${e.message}");
@@ -248,11 +208,9 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
 
     _verifyTimer = Timer.periodic(const Duration(seconds: 2), (t) async {
       _verifyTicks++;
-
       if (_verifyTicks == 5 && mounted) {
         _show("ℹ️ Si confirmation email activée, confirme puis reconnecte-toi.");
       }
-
       if (_verifyTicks >= 15) t.cancel();
     });
   }
@@ -264,16 +222,16 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
     return FasoLoadingOverlay(
       isLoading: isLoading,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF3F5FF),
+        backgroundColor: AppColors.bg,
         appBar: AppBar(
-          backgroundColor: const Color(0xFFF3F5FF),
+          backgroundColor: AppColors.bg,
           elevation: 0,
+          centerTitle: true,
+          title: const AppLogo(size: 100), // ✅ logo harmonisé
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, color: Colors.black87),
             onPressed: isLoading ? null : () => Navigator.pop(context),
           ),
-          centerTitle: true,
-          title: Image.asset('assets/images/logo.png', width: 46),
         ),
         body: Center(
           child: ConstrainedBox(
@@ -283,16 +241,22 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ✅ Date simple moderne
                   SizedBox(
                     width: 360,
-                    child: TextFormField(
-                      controller: _birthCtrl,
-                      readOnly: true,
-                      decoration: _deco("Date de naissance"),
-                      onTap: isLoading ? null : _pickBirthdate,
+                    child: BirthdatePickerField(
+                      value: d.birthdate,
+                      enabled: !isLoading,
+                      onChanged: (picked) {
+                        setState(() => d.birthdate = picked);
+                        if (picked != null && _ageFrom(picked) < 18) {
+                          _show("⛔ Tu dois avoir 18 ans minimum.");
+                        }
+                      },
                     ),
                   ),
-                  const SizedBox(height: 26),
+
+                  const SizedBox(height: 20),
 
                   Wrap(
                     spacing: 16,
@@ -316,7 +280,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                     ],
                   ),
 
-                  const SizedBox(height: 26),
+                  const SizedBox(height: 20),
 
                   SizedBox(
                     width: 520,
@@ -324,12 +288,17 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                       controller: _bioCtrl,
                       minLines: 5,
                       maxLines: 8,
-                      decoration: _deco("Centres d’intérêts, loisirs… (facultatif)"),
+                      decoration: InputDecoration(
+                        hintText: "Centres d’intérêts, loisirs… (facultatif)",
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.75),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
                       enabled: !isLoading,
                     ),
                   ),
 
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 14),
 
                   Row(
                     children: [
@@ -348,34 +317,16 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                     ],
                   ),
 
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 16),
 
+                  // ✅ Bouton capsule bleu / gris
                   Center(
-                    child: SizedBox(
-                      width: 240,
-                      height: 44,
-                      child: ElevatedButton(
-                        onPressed: _canSubmit ? _createAccountAndProfile : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFBFC7EA),
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor:
-                          const Color(0xFFBFC7EA).withOpacity(0.55),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: isLoading
-                            ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                            : const Text(
-                          "Créer son compte",
-                          style: TextStyle(fontWeight: FontWeight.w900),
-                        ),
-                      ),
+                    child: PrimaryButton(
+                      text: "Créer son compte",
+                      width: 200,
+                      height: 40,
+                      loading: isLoading,
+                      onPressed: _canSubmit ? _createAccountAndProfile : null,
                     ),
                   ),
                 ],
@@ -400,7 +351,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           border: Border.all(color: Colors.black54, width: 1.2),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           color: Colors.white.withOpacity(0.75),
         ),
         child: Text(

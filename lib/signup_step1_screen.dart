@@ -5,6 +5,10 @@ import 'package:intl_phone_field/intl_phone_field.dart';
 import 'signup_draft.dart';
 import 'signup_step2_screen.dart';
 
+import 'ui/app_colors.dart';
+import 'ui/app_logo.dart';
+import 'ui/primary_button.dart';
+
 class SignupStep1Screen extends StatefulWidget {
   final SignupDraft draft;
 
@@ -98,14 +102,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     pwdCtrl = TextEditingController(text: d.password);
     pwd2Ctrl = TextEditingController(text: "");
 
-    // si déjà en draft
-    if (d.phone.isNotEmpty) {
-      _phoneComplete = d.phone; // on garde le complete number
-    }
-    if (d.country.isNotEmpty) {
-      // ici on stocke l’ISO du téléphone dans d.country (ex: BF, FR, etc.)
-      _phoneCountryISO = d.country;
-    }
+    if (d.phone.isNotEmpty) _phoneComplete = d.phone;
+    if (d.country.isNotEmpty) _phoneCountryISO = d.country;
   }
 
   @override
@@ -133,7 +131,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: Color(0xFF1E2DFF), width: 1.4),
+      borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.4),
     ),
   );
 
@@ -143,7 +141,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     final firstOk = firstNameCtrl.text.trim().isNotEmpty;
     final lastOk = lastNameCtrl.text.trim().isNotEmpty;
 
-    // téléphone OK si completeNumber a au moins 8 chiffres hors +indicatif
     final phoneOk = _phoneComplete.replaceAll(RegExp(r'[^0-9]'), '').length >= 8;
 
     final email = emailCtrl.text.trim();
@@ -156,7 +153,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     final dropDownOk =
         d.gender.isNotEmpty && d.city.isNotEmpty && d.lookingFor.isNotEmpty;
 
-    return firstOk && lastOk && phoneOk && emailOk && pwdOk && dropDownOk;
+    return firstOk && lastOk && phoneOk && emailOk && pwdOk && dropDownOk && !_loading;
   }
 
   void _saveDraftFromControllers() {
@@ -164,13 +161,11 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     d.firstName = firstNameCtrl.text.trim();
     d.lastName = lastNameCtrl.text.trim();
 
-    // ✅ téléphone + indicatif en une seule valeur
-    d.phone = _phoneComplete.trim();
-
+    d.phone = _phoneComplete.trim(); // + indicatif + numéro
     d.email = emailCtrl.text.trim();
     d.password = pwdCtrl.text;
 
-    // ✅ on stocke l’ISO du pays du téléphone dans country (ex BF, FR)
+    // ISO du pays lié au téléphone (BF, FR, etc.)
     d.country = _phoneCountryISO;
   }
 
@@ -182,12 +177,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
         (msg.contains('email') && msg.contains('already'))) {
       return "Cet email est déjà utilisé. Essaie de te connecter.";
     }
-    if (msg.contains('invalid') && msg.contains('email')) {
-      return "Email invalide.";
-    }
-    if (msg.contains('password') && msg.contains('short')) {
-      return "Mot de passe trop court.";
-    }
+    if (msg.contains('invalid') && msg.contains('email')) return "Email invalide.";
+    if (msg.contains('password') && msg.contains('short')) return "Mot de passe trop court.";
     if (msg.contains('failed to fetch') || msg.contains('network')) {
       return "Problème de connexion internet. Réessaie.";
     }
@@ -205,11 +196,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       final password = pwdCtrl.text;
       final supabase = Supabase.instance.client;
 
-      final response = await supabase.auth.signUp(
-        email: email,
-        password: password,
-      );
-
+      final response = await supabase.auth.signUp(email: email, password: password);
       final userId = response.user?.id;
 
       if (!mounted) return;
@@ -217,10 +204,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => SignupStep2Screen(
-            draft: widget.draft,
-            userId: userId,
-          ),
+          builder: (_) => SignupStep2Screen(draft: widget.draft, userId: userId),
         ),
       );
     } on AuthException catch (e) {
@@ -257,9 +241,9 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     final d = widget.draft;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F5FF),
+      backgroundColor: AppColors.bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF3F5FF),
+        backgroundColor: AppColors.bg,
         elevation: 0,
         toolbarHeight: 86,
         leading: IconButton(
@@ -267,12 +251,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
           onPressed: _loading ? null : () => Navigator.pop(context),
         ),
         centerTitle: true,
-        title: Image.asset(
-          'assets/images/logo.png',
-          width: 100,
-          height: 100,
-          fit: BoxFit.contain,
-        ),
+        title: const AppLogo(size: 100), // ✅ harmonisé
       ),
       body: Center(
         child: ConstrainedBox(
@@ -286,17 +265,19 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (_errorMsg != null) ...[
-                    Container(
+                    SizedBox(
                       width: 360,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.red.withOpacity(0.3)),
-                      ),
-                      child: Text(
-                        _errorMsg!,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                        ),
+                        child: Text(
+                          _errorMsg!,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -354,7 +335,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ Téléphone: drapeau + indicatif (plus de “Pays”)
+                  // ✅ Téléphone drapeau + indicatif (on ne collecte PAS un pays séparé)
                   SizedBox(
                     width: 360,
                     child: IntlPhoneField(
@@ -395,7 +376,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ Mot de passe (pleine largeur, sans bouton “Afficher”)
                   SizedBox(
                     width: 360,
                     child: TextFormField(
@@ -418,7 +398,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ Confirmation (pleine largeur + œil)
                   SizedBox(
                     width: 360,
                     child: TextFormField(
@@ -455,9 +434,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
 
                   const SizedBox(height: 18),
 
-                  // ✅ message si pas OK (remplace le “tap sur bouton désactivé”)
                   if (!_canGoNext) ...[
-                    const SizedBox(height: 6),
                     const Text(
                       "⚠️ Remplis tous les champs obligatoires pour activer “Suivant”.",
                       style: TextStyle(fontWeight: FontWeight.w700),
@@ -466,31 +443,12 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ],
 
                   Center(
-                    child: SizedBox(
-                      width: 220,
-                      height: 44,
-                      child: ElevatedButton(
-                        onPressed: (_canGoNext && !_loading) ? _next : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1E2DFF), // ✅ bleu
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor:
-                          const Color(0xFF1E2DFF).withOpacity(0.35),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: _loading
-                            ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                            : const Text(
-                          "Suivant",
-                          style: TextStyle(fontWeight: FontWeight.w900),
-                        ),
-                      ),
+                    child: PrimaryButton(
+                      text: "Suivant",
+                      width: 170,
+                      height: 30,
+                      loading: _loading,
+                      onPressed: _canGoNext ? _next : null,
                     ),
                   ),
                 ],
