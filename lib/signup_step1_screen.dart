@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl_phone_field/intl_phone_field.dart';
+
 import 'signup_draft.dart';
 import 'signup_step2_screen.dart';
 
@@ -16,34 +19,28 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
 
   late final TextEditingController firstNameCtrl;
   late final TextEditingController lastNameCtrl;
-  late final TextEditingController phoneCtrl;
   late final TextEditingController emailCtrl;
   late final TextEditingController pwdCtrl;
   late final TextEditingController pwd2Ctrl;
 
+  // téléphone (intl_phone_field gère le dial + drapeau)
+  String _phoneComplete = ""; // ex: +22670123456
+  String _phoneCountryISO = "BF"; // ex: BF
+
   bool hidePwd = true;
   bool hidePwd2 = true;
 
-  final countries = const [
-    "Burkina",
-    "Mali",
-    "Niger",
-    "Cote d'ivoire",
-    "Senegal",
-    "France",
-    "USA",
-    "Canada"
-  ];
+  bool _loading = false;
+  String? _errorMsg;
 
   final lookingForItems = const [
     "❤️ Amour",
-    "🤝🏿 Amitié",
-    "❤️🤝🏿 Les deux",
+    "🤝 Amitié",
+    "❤️🤝 Les deux",
   ];
 
   final genders = const ["Masculin", "Feminin"];
 
-  // ✅ Villes BF (triées A→Z, doublons supprimés)
   final citiesBF = const [
     "Arbinda",
     "Banfora",
@@ -82,7 +79,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     "Sebba",
     "Solenzo",
     "Tenkodogo",
-    "Tiao", // si tu ne veux pas cette ville, supprime-la
+    "Tiao",
     "Titao",
     "Tougan",
     "Yako",
@@ -97,17 +94,24 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
 
     firstNameCtrl = TextEditingController(text: d.firstName);
     lastNameCtrl = TextEditingController(text: d.lastName);
-    phoneCtrl = TextEditingController(text: d.phone);
     emailCtrl = TextEditingController(text: d.email);
     pwdCtrl = TextEditingController(text: d.password);
     pwd2Ctrl = TextEditingController(text: "");
+
+    // si déjà en draft
+    if (d.phone.isNotEmpty) {
+      _phoneComplete = d.phone; // on garde le complete number
+    }
+    if (d.country.isNotEmpty) {
+      // ici on stocke l’ISO du téléphone dans d.country (ex: BF, FR, etc.)
+      _phoneCountryISO = d.country;
+    }
   }
 
   @override
   void dispose() {
     firstNameCtrl.dispose();
     lastNameCtrl.dispose();
-    phoneCtrl.dispose();
     emailCtrl.dispose();
     pwdCtrl.dispose();
     pwd2Ctrl.dispose();
@@ -127,17 +131,20 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       borderRadius: BorderRadius.circular(10),
       borderSide: const BorderSide(color: Colors.black54, width: 1.2),
     ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: Color(0xFF1E2DFF), width: 1.4),
+    ),
   );
 
-  /// ✅ Active/désactive le bouton SANS appeler validate() en boucle
   bool get _canGoNext {
     final d = widget.draft;
 
     final firstOk = firstNameCtrl.text.trim().isNotEmpty;
     final lastOk = lastNameCtrl.text.trim().isNotEmpty;
 
-    final phone = phoneCtrl.text.trim();
-    final phoneOk = phone.isNotEmpty && phone.length >= 8;
+    // téléphone OK si completeNumber a au moins 8 chiffres hors +indicatif
+    final phoneOk = _phoneComplete.replaceAll(RegExp(r'[^0-9]'), '').length >= 8;
 
     final email = emailCtrl.text.trim();
     final emailOk = email.isNotEmpty && email.contains("@");
@@ -146,10 +153,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     final pwd2 = pwd2Ctrl.text;
     final pwdOk = pwd.isNotEmpty && pwd.length >= 6 && pwd2 == pwd;
 
-    final dropDownOk = d.gender.isNotEmpty &&
-        d.city.isNotEmpty &&
-        d.country.isNotEmpty &&
-        d.lookingFor.isNotEmpty;
+    final dropDownOk =
+        d.gender.isNotEmpty && d.city.isNotEmpty && d.lookingFor.isNotEmpty;
 
     return firstOk && lastOk && phoneOk && emailOk && pwdOk && dropDownOk;
   }
@@ -158,32 +163,93 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     final d = widget.draft;
     d.firstName = firstNameCtrl.text.trim();
     d.lastName = lastNameCtrl.text.trim();
-    d.phone = phoneCtrl.text.trim();
+
+    // ✅ téléphone + indicatif en une seule valeur
+    d.phone = _phoneComplete.trim();
+
     d.email = emailCtrl.text.trim();
     d.password = pwdCtrl.text;
+
+    // ✅ on stocke l’ISO du pays du téléphone dans country (ex BF, FR)
+    d.country = _phoneCountryISO;
   }
 
-  void _next() {
+  String _friendlyAuthError(Object e) {
+    final msg = e.toString().toLowerCase();
+
+    if (msg.contains('already registered') ||
+        msg.contains('user already') ||
+        (msg.contains('email') && msg.contains('already'))) {
+      return "Cet email est déjà utilisé. Essaie de te connecter.";
+    }
+    if (msg.contains('invalid') && msg.contains('email')) {
+      return "Email invalide.";
+    }
+    if (msg.contains('password') && msg.contains('short')) {
+      return "Mot de passe trop court.";
+    }
+    if (msg.contains('failed to fetch') || msg.contains('network')) {
+      return "Problème de connexion internet. Réessaie.";
+    }
+    return "Erreur: ${e.toString()}";
+  }
+
+  Future<void> _signupWithSupabase() async {
+    setState(() {
+      _loading = true;
+      _errorMsg = null;
+    });
+
+    try {
+      final email = emailCtrl.text.trim();
+      final password = pwdCtrl.text;
+      final supabase = Supabase.instance.client;
+
+      final response = await supabase.auth.signUp(
+        email: email,
+        password: password,
+      );
+
+      final userId = response.user?.id;
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SignupStep2Screen(
+            draft: widget.draft,
+            userId: userId,
+          ),
+        ),
+      );
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _errorMsg = _friendlyAuthError(e.message));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _errorMsg = _friendlyAuthError(e));
+    } finally {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _next() async {
     _saveDraftFromControllers();
 
-    // ✅ Ici on valide vraiment le formulaire
     final ok = _formKey.currentState?.validate() ?? false;
     if (!ok) return;
 
     if (!_canGoNext) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("⚠️ Remplis tous les champs obligatoires.")),
+        const SnackBar(content: Text("⚠️ Remplis tous les champs obligatoires pour continuer.")),
       );
       setState(() {});
       return;
     }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => SignupStep2Screen(draft: widget.draft),
-      ),
-    );
+    await _signupWithSupabase();
   }
 
   @override
@@ -195,12 +261,18 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFFF3F5FF),
         elevation: 0,
+        toolbarHeight: 86,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.black87),
+          onPressed: _loading ? null : () => Navigator.pop(context),
         ),
         centerTitle: true,
-        title: Image.asset('assets/images/logo.png', width: 46),
+        title: Image.asset(
+          'assets/images/logo.png',
+          width: 100,
+          height: 100,
+          fit: BoxFit.contain,
+        ),
       ),
       body: Center(
         child: ConstrainedBox(
@@ -213,28 +285,47 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (_errorMsg != null) ...[
+                    Container(
+                      width: 360,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.red.withOpacity(0.3)),
+                      ),
+                      child: Text(
+                        _errorMsg!,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
                   SizedBox(
                     width: 360,
                     child: TextFormField(
                       controller: firstNameCtrl,
                       decoration: deco("Prénom"),
+                      enabled: !_loading,
                       validator: (v) =>
                       (v == null || v.trim().isEmpty) ? "Prénom obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 12),
+
                   SizedBox(
                     width: 360,
                     child: TextFormField(
                       controller: lastNameCtrl,
                       decoration: deco("Nom"),
+                      enabled: !_loading,
                       validator: (v) =>
                       (v == null || v.trim().isEmpty) ? "Nom obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
-                  // Sexe
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
@@ -243,13 +334,12 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       items: genders
                           .map((g) => DropdownMenuItem(value: g, child: Text(g)))
                           .toList(),
-                      onChanged: (v) => setState(() => d.gender = v ?? ""),
+                      onChanged: _loading ? null : (v) => setState(() => d.gender = v ?? ""),
                       validator: (v) => (v == null || v.isEmpty) ? "Sexe obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
-                  // Ville
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
@@ -258,45 +348,32 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       items: citiesBF
                           .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                           .toList(),
-                      onChanged: (v) => setState(() => d.city = v ?? ""),
+                      onChanged: _loading ? null : (v) => setState(() => d.city = v ?? ""),
                       validator: (v) => (v == null || v.isEmpty) ? "Ville obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
-                  // Pays + Téléphone
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      SizedBox(
-                        width: 160,
-                        child: DropdownButtonFormField<String>(
-                          value: d.country.isEmpty ? null : d.country,
-                          decoration: deco("Pays"),
-                          items: countries
-                              .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                              .toList(),
-                          onChanged: (v) => setState(() => d.country = v ?? ""),
-                          validator: (v) =>
-                          (v == null || v.isEmpty) ? "Pays obligatoire" : null,
-                        ),
-                      ),
-                      SizedBox(
-                        width: 190,
-                        child: TextFormField(
-                          controller: phoneCtrl,
-                          decoration: deco("70 12 34 56"),
-                          keyboardType: TextInputType.phone,
-                          validator: (v) {
-                            final value = (v ?? "").trim();
-                            if (value.isEmpty) return "Téléphone obligatoire";
-                            if (value.length < 8) return "Téléphone invalide";
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
+                  // ✅ Téléphone: drapeau + indicatif (plus de “Pays”)
+                  SizedBox(
+                    width: 360,
+                    child: IntlPhoneField(
+                      enabled: !_loading,
+                      initialCountryCode: _phoneCountryISO.isEmpty ? "BF" : _phoneCountryISO,
+                      decoration: deco("70 12 34 56").copyWith(hintText: "70 12 34 56"),
+                      onChanged: (phone) {
+                        setState(() {
+                          _phoneComplete = phone.completeNumber; // +22670123456
+                          _phoneCountryISO = phone.countryISOCode; // BF, FR...
+                        });
+                      },
+                      validator: (phone) {
+                        final complete = phone?.completeNumber ?? _phoneComplete;
+                        final digits = complete.replaceAll(RegExp(r'[^0-9]'), '');
+                        if (digits.length < 8) return "Téléphone invalide";
+                        return null;
+                      },
+                    ),
                   ),
 
                   const SizedBox(height: 12),
@@ -306,6 +383,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     child: TextFormField(
                       controller: emailCtrl,
                       decoration: deco("Email"),
+                      enabled: !_loading,
                       keyboardType: TextInputType.emailAddress,
                       validator: (v) {
                         final value = (v ?? "").trim();
@@ -317,60 +395,42 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Mot de passe + bouton Afficher
-                  Row(
-                    children: [
-                      SizedBox(
-                        width: 260,
-                        child: TextFormField(
-                          controller: pwdCtrl,
-                          obscureText: hidePwd,
-                          decoration: deco("Mot de passe").copyWith(
-                            suffixIcon: IconButton(
-                              onPressed: () => setState(() => hidePwd = !hidePwd),
-                              icon: Icon(hidePwd ? Icons.visibility_off : Icons.visibility),
-                            ),
-                          ),
-                          validator: (v) {
-                            final value = (v ?? "");
-                            if (value.isEmpty) return "Mot de passe obligatoire";
-                            if (value.length < 6) return "Min 6 caractères";
-                            return null;
-                          },
+                  // ✅ Mot de passe (pleine largeur, sans bouton “Afficher”)
+                  SizedBox(
+                    width: 360,
+                    child: TextFormField(
+                      controller: pwdCtrl,
+                      obscureText: hidePwd,
+                      enabled: !_loading,
+                      decoration: deco("Mot de passe").copyWith(
+                        suffixIcon: IconButton(
+                          onPressed: _loading ? null : () => setState(() => hidePwd = !hidePwd),
+                          icon: Icon(hidePwd ? Icons.visibility_off : Icons.visibility),
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: 110,
-                        height: 46,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1E2DFF),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          onPressed: () => setState(() {
-                            hidePwd = !hidePwd;
-                            hidePwd2 = !hidePwd2;
-                          }),
-                          child: const Text(
-                            "Afficher",
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                      ),
-                    ],
+                      validator: (v) {
+                        final value = (v ?? "");
+                        if (value.isEmpty) return "Mot de passe obligatoire";
+                        if (value.length < 6) return "Min 6 caractères";
+                        return null;
+                      },
+                    ),
                   ),
                   const SizedBox(height: 12),
 
+                  // ✅ Confirmation (pleine largeur + œil)
                   SizedBox(
                     width: 360,
                     child: TextFormField(
                       controller: pwd2Ctrl,
                       obscureText: hidePwd2,
-                      decoration: deco("Confirmer le mot de passe"),
+                      enabled: !_loading,
+                      decoration: deco("Confirmer le mot de passe").copyWith(
+                        suffixIcon: IconButton(
+                          onPressed: _loading ? null : () => setState(() => hidePwd2 = !hidePwd2),
+                          icon: Icon(hidePwd2 ? Icons.visibility_off : Icons.visibility),
+                        ),
+                      ),
                       validator: (v) {
                         if ((v ?? "").isEmpty) return "Confirmation obligatoire";
                         if (v != pwdCtrl.text) return "Les mots de passe ne correspondent pas";
@@ -380,7 +440,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Je recherche
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
@@ -389,29 +448,45 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       items: lookingForItems
                           .map((x) => DropdownMenuItem(value: x, child: Text(x)))
                           .toList(),
-                      onChanged: (v) => setState(() => d.lookingFor = v ?? ""),
+                      onChanged: _loading ? null : (v) => setState(() => d.lookingFor = v ?? ""),
                       validator: (v) => (v == null || v.isEmpty) ? "Choix obligatoire" : null,
                     ),
                   ),
 
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 18),
+
+                  // ✅ message si pas OK (remplace le “tap sur bouton désactivé”)
+                  if (!_canGoNext) ...[
+                    const SizedBox(height: 6),
+                    const Text(
+                      "⚠️ Remplis tous les champs obligatoires pour activer “Suivant”.",
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
 
                   Center(
                     child: SizedBox(
                       width: 220,
                       height: 44,
                       child: ElevatedButton(
-                        onPressed: _canGoNext ? _next : null,
+                        onPressed: (_canGoNext && !_loading) ? _next : null,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFBFC7EA),
+                          backgroundColor: const Color(0xFF1E2DFF), // ✅ bleu
                           foregroundColor: Colors.white,
                           disabledBackgroundColor:
-                          const Color(0xFFBFC7EA).withOpacity(0.55),
+                          const Color(0xFF1E2DFF).withOpacity(0.35),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        child: const Text(
+                        child: _loading
+                            ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                            : const Text(
                           "Suivant",
                           style: TextStyle(fontWeight: FontWeight.w900),
                         ),

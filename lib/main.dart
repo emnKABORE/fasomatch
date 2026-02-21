@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_config.dart';
-import 'auth_test_screen.dart'; // ✅ AJOUTE CET IMPORT
+import 'welcome_screen.dart'; // ✅ AJOUTE CET IMPORT
 // import 'welcome_screen.dart'; // (tu peux laisser commenté pour l’instant)
 
 Future<void> main() async {
@@ -35,7 +35,7 @@ class FasoMatchApp extends StatelessWidget {
           seedColor: const Color(0xFFE63946),
         ),
       ),
-      home: const AuthTestScreen(), // ✅ ici (sans double virgule)
+        home: const WelcomeScreen(), // ✅ ici (sans double virgule)
     );
   }
 }
