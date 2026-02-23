@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../match/matches_screen.dart';
 import '../likes/likes_received_screen.dart';
@@ -15,9 +16,18 @@ class SwipeScreen extends StatefulWidget {
 }
 
 class _SwipeScreenState extends State<SwipeScreen> {
+  final supabase = Supabase.instance.client;
+
   // ✅ Plus tard tu le récupères depuis Supabase (abonnements table)
   // Pour l’instant : "gratuit" / "premium" / "ultra"
   String currentPlan = "gratuit";
+
+  // ---- UI SIZES (STANDARD) ----
+  static const double kActionBtn = 72; // Like / Pass / Star / Rewind
+  static const double kTopBtn = 72; // Filtre / Premium
+  static const double kTopRadius = 22;
+  static const double kActionGap = 16;
+  static const double kCardMaxWidth = 420; // largeur max sur web
 
   // ---- FILTRES ----
   String? _cityFilter; // null = toutes
@@ -68,6 +78,29 @@ class _SwipeScreenState extends State<SwipeScreen> {
           u.age >= _ageRange.start.round() && u.age <= _ageRange.end.round();
       return okCity && okAge;
     }).toList();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlan();
+  }
+
+  Future<void> _loadPlan() async {
+    try {
+      // ✅ demandé : rpc + print
+      final plan = await supabase.rpc('get_current_plan');
+      // ignore: avoid_print
+      print(plan);
+
+      // ✅ si la RPC renvoie "gratuit"/"premium"/"ultra"
+      if (plan is String && mounted) {
+        setState(() => currentPlan = plan);
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print("Erreur get_current_plan: $e");
+    }
   }
 
   void _openFilterSheet() {
@@ -203,7 +236,6 @@ class _SwipeScreenState extends State<SwipeScreen> {
       MaterialPageRoute(
         builder: (_) => SubscriptionScreen(
           currentPlan: currentPlan,
-          // ✅ callback si tu veux simuler un upgrade
           onPlanSelected: (p) => setState(() => currentPlan = p),
         ),
       ),
@@ -247,9 +279,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
 
     // ✅ si overlay actif => zone blanche
     final _UserCardData? current =
-    (_showNoMoreOverlay || users.isEmpty)
-        ? null
-        : users[_index.clamp(0, users.length - 1)];
+    (_showNoMoreOverlay || users.isEmpty) ? null : users[_index.clamp(0, users.length - 1)];
 
     return Scaffold(
       backgroundColor: const Color(0xFFF3F5FF),
@@ -261,18 +291,16 @@ class _SwipeScreenState extends State<SwipeScreen> {
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Row(
                 children: [
-                  // ✅ Filtre 75x75
                   _topIconButton(
                     icon: Icons.filter_alt_rounded,
                     bg: const Color(0xFF6D28D9),
                     onTap: _openFilterSheet,
-                    size: 75,
+                    size: kTopBtn,
                     iconSize: 34,
-                    radius: 22,
+                    radius: kTopRadius,
                   ),
                   const Spacer(),
 
-                  // ✅ Logo plus visible
                   Image.asset(
                     "assets/images/logo.png",
                     width: 130,
@@ -282,14 +310,13 @@ class _SwipeScreenState extends State<SwipeScreen> {
 
                   const Spacer(),
 
-                  // ✅ Abonnement 75x75
                   _topIconButton(
                     icon: Icons.workspace_premium_rounded,
                     bg: const Color(0xFFFFC107),
                     onTap: _goSubscription,
-                    size: 75,
+                    size: kTopBtn,
                     iconSize: 34,
-                    radius: 22,
+                    radius: kTopRadius,
                   ),
                 ],
               ),
@@ -299,15 +326,14 @@ class _SwipeScreenState extends State<SwipeScreen> {
             Expanded(
               child: Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420),
+                  constraints: const BoxConstraints(maxWidth: kCardMaxWidth),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Stack(
                       children: [
                         _ProfileCard(
                           user: current,
-                          emptyText:
-                          "Aucun profil pour le moment.\nReviens plus tard 🙂",
+                          emptyText: "Aucun profil pour le moment.\nReviens plus tard 🙂",
                           forceWhiteEmpty: _showNoMoreOverlay,
                         ),
 
@@ -326,8 +352,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
                             child: Align(
                               alignment: Alignment.center,
                               child: _NoMoreProfilesOverlay(
-                                onClose: () =>
-                                    setState(() => _showNoMoreOverlay = false),
+                                onClose: () => setState(() => _showNoMoreOverlay = false),
                                 onRefresh: _refreshProfiles,
                               ),
                             ),
@@ -343,8 +368,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
               child: Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.55),
                   borderRadius: BorderRadius.circular(26),
@@ -357,28 +381,28 @@ class _SwipeScreenState extends State<SwipeScreen> {
                       icon: Icons.undo_rounded,
                       bg: const Color(0xFFFB8C00),
                       onTap: _actionRewind,
-                      size: 62,
+                      size: kActionBtn,
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: kActionGap),
                     _roundAction(
                       icon: Icons.close_rounded,
                       bg: const Color(0xFFE53935),
                       onTap: _actionPass,
-                      size: 72, // ✅ agrandi
+                      size: kActionBtn,
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: kActionGap),
                     _roundAction(
                       icon: Icons.star_rounded,
                       bg: const Color(0xFF1E88E5),
                       onTap: _actionSuperLike,
-                      size: 72, // ✅ agrandi
+                      size: kActionBtn,
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: kActionGap),
                     _roundAction(
                       icon: Icons.favorite_rounded,
                       bg: const Color(0xFF43A047),
                       onTap: _actionLike,
-                      size: 72, // ✅ agrandi
+                      size: kActionBtn,
                     ),
                   ],
                 ),
@@ -387,10 +411,9 @@ class _SwipeScreenState extends State<SwipeScreen> {
 
             // --- BOTTOM NAV GROUP (rect translucide) ---
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 6, 10, 12),
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
               child: Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.60),
                   borderRadius: BorderRadius.circular(26),
@@ -405,9 +428,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
                       onTap: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(
-                            builder: (_) => const MatchesScreen(),
-                          ),
+                          MaterialPageRoute(builder: (_) => const MatchesScreen()),
                         );
                       },
                     ),
@@ -653,8 +674,7 @@ class _ProfileCard extends StatelessWidget {
               top: 12,
               left: 12,
               child: Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.55),
                   borderRadius: BorderRadius.circular(14),
@@ -663,12 +683,8 @@ class _ProfileCard extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      user!.isVerified
-                          ? Icons.verified_rounded
-                          : Icons.info_outline,
-                      color: user!.isVerified
-                          ? const Color(0xFF00E676)
-                          : Colors.white,
+                      user!.isVerified ? Icons.verified_rounded : Icons.info_outline,
+                      color: user!.isVerified ? const Color(0xFF00E676) : Colors.white,
                       size: 18,
                     ),
                     const SizedBox(width: 6),
@@ -779,20 +795,24 @@ Widget _navIcon({
   required IconData icon,
   required String label,
   required VoidCallback onTap,
+  double width = 78,
+  double height = 56,
 }) {
   return InkWell(
-    borderRadius: BorderRadius.circular(14),
+    borderRadius: BorderRadius.circular(16),
     onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    child: SizedBox(
+      width: width,
+      height: height,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 27, color: Colors.black87),
+          Icon(icon, size: 26, color: Colors.black87),
           const SizedBox(height: 4),
-          Text(label,
-              style:
-              const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+          ),
         ],
       ),
     ),
