@@ -8,6 +8,7 @@ import 'signup_step2_screen.dart';
 import 'ui/app_colors.dart';
 import 'ui/app_logo.dart';
 import 'ui/primary_button.dart';
+import 'ui/faso_input.dart';
 
 class SignupStep1Screen extends StatefulWidget {
   final SignupDraft draft;
@@ -141,7 +142,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     final firstOk = firstNameCtrl.text.trim().isNotEmpty;
     final lastOk = lastNameCtrl.text.trim().isNotEmpty;
 
-    final phoneOk = _phoneComplete.replaceAll(RegExp(r'[^0-9]'), '').length >= 8;
+    final phoneOk =
+        _phoneComplete.replaceAll(RegExp(r'[^0-9]'), '').length >= 8;
 
     final email = emailCtrl.text.trim();
     final emailOk = email.isNotEmpty && email.contains("@");
@@ -153,7 +155,13 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     final dropDownOk =
         d.gender.isNotEmpty && d.city.isNotEmpty && d.lookingFor.isNotEmpty;
 
-    return firstOk && lastOk && phoneOk && emailOk && pwdOk && dropDownOk && !_loading;
+    return firstOk &&
+        lastOk &&
+        phoneOk &&
+        emailOk &&
+        pwdOk &&
+        dropDownOk &&
+        !_loading;
   }
 
   void _saveDraftFromControllers() {
@@ -178,7 +186,9 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       return "Cet email est déjà utilisé. Essaie de te connecter.";
     }
     if (msg.contains('invalid') && msg.contains('email')) return "Email invalide.";
-    if (msg.contains('password') && msg.contains('short')) return "Mot de passe trop court.";
+    if (msg.contains('password') && msg.contains('short')) {
+      return "Mot de passe trop court.";
+    }
     if (msg.contains('failed to fetch') || msg.contains('network')) {
       return "Problème de connexion internet. Réessaie.";
     }
@@ -196,7 +206,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       final password = pwdCtrl.text;
       final supabase = Supabase.instance.client;
 
-      final response = await supabase.auth.signUp(email: email, password: password);
+      final response =
+      await supabase.auth.signUp(email: email, password: password);
       final userId = response.user?.id;
 
       if (!mounted) return;
@@ -227,7 +238,9 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
 
     if (!_canGoNext) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("⚠️ Remplis tous les champs obligatoires pour continuer.")),
+        const SnackBar(
+          content: Text("⚠️ Remplis tous les champs obligatoires pour continuer."),
+        ),
       );
       setState(() {});
       return;
@@ -251,7 +264,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
           onPressed: _loading ? null : () => Navigator.pop(context),
         ),
         centerTitle: true,
-        title: const AppLogo(size: 100), // ✅ harmonisé
+        title: const AppLogo(size: 100),
       ),
       body: Center(
         child: ConstrainedBox(
@@ -283,30 +296,47 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     const SizedBox(height: 12),
                   ],
 
+                  // ✅ PRÉNOM (FasoInput)
                   SizedBox(
                     width: 360,
-                    child: TextFormField(
+                    child: FasoInput(
                       controller: firstNameCtrl,
-                      decoration: deco("Prénom"),
+                      hint: "Prénom",
                       enabled: !_loading,
+                      borderRadius: 10,
+                      fillOpacity: 0.75,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 14,
+                      ),
+                      onChanged: (_) => setState(() {}),
                       validator: (v) =>
                       (v == null || v.trim().isEmpty) ? "Prénom obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
+                  // ✅ NOM (FasoInput)
                   SizedBox(
                     width: 360,
-                    child: TextFormField(
+                    child: FasoInput(
                       controller: lastNameCtrl,
-                      decoration: deco("Nom"),
+                      hint: "Nom",
                       enabled: !_loading,
+                      borderRadius: 10,
+                      fillOpacity: 0.75,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 14,
+                      ),
+                      onChanged: (_) => setState(() {}),
                       validator: (v) =>
                       (v == null || v.trim().isEmpty) ? "Nom obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
+                  // ✅ SEXE (Dropdown inchangé)
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
@@ -315,12 +345,16 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       items: genders
                           .map((g) => DropdownMenuItem(value: g, child: Text(g)))
                           .toList(),
-                      onChanged: _loading ? null : (v) => setState(() => d.gender = v ?? ""),
-                      validator: (v) => (v == null || v.isEmpty) ? "Sexe obligatoire" : null,
+                      onChanged: _loading
+                          ? null
+                          : (v) => setState(() => d.gender = v ?? ""),
+                      validator: (v) =>
+                      (v == null || v.isEmpty) ? "Sexe obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
+                  // ✅ VILLE (Dropdown inchangé)
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
@@ -329,19 +363,24 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       items: citiesBF
                           .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                           .toList(),
-                      onChanged: _loading ? null : (v) => setState(() => d.city = v ?? ""),
-                      validator: (v) => (v == null || v.isEmpty) ? "Ville obligatoire" : null,
+                      onChanged: _loading
+                          ? null
+                          : (v) => setState(() => d.city = v ?? ""),
+                      validator: (v) =>
+                      (v == null || v.isEmpty) ? "Ville obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ Téléphone drapeau + indicatif (on ne collecte PAS un pays séparé)
+                  // ✅ TÉLÉPHONE (IntlPhoneField inchangé)
                   SizedBox(
                     width: 360,
                     child: IntlPhoneField(
                       enabled: !_loading,
-                      initialCountryCode: _phoneCountryISO.isEmpty ? "BF" : _phoneCountryISO,
-                      decoration: deco("70 12 34 56").copyWith(hintText: "70 12 34 56"),
+                      initialCountryCode:
+                      _phoneCountryISO.isEmpty ? "BF" : _phoneCountryISO,
+                      decoration:
+                      deco("70 12 34 56").copyWith(hintText: "70 12 34 56"),
                       onChanged: (phone) {
                         setState(() {
                           _phoneComplete = phone.completeNumber; // +22670123456
@@ -350,22 +389,30 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       },
                       validator: (phone) {
                         final complete = phone?.completeNumber ?? _phoneComplete;
-                        final digits = complete.replaceAll(RegExp(r'[^0-9]'), '');
+                        final digits =
+                        complete.replaceAll(RegExp(r'[^0-9]'), '');
                         if (digits.length < 8) return "Téléphone invalide";
                         return null;
                       },
                     ),
                   ),
-
                   const SizedBox(height: 12),
 
+                  // ✅ EMAIL (FasoInput)
                   SizedBox(
                     width: 360,
-                    child: TextFormField(
+                    child: FasoInput(
                       controller: emailCtrl,
-                      decoration: deco("Email"),
+                      hint: "Email",
                       enabled: !_loading,
                       keyboardType: TextInputType.emailAddress,
+                      borderRadius: 10,
+                      fillOpacity: 0.75,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 14,
+                      ),
+                      onChanged: (_) => setState(() {}),
                       validator: (v) {
                         final value = (v ?? "").trim();
                         if (value.isEmpty) return "Email obligatoire";
@@ -376,18 +423,26 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
+                  // ✅ MOT DE PASSE (FasoInput)
                   SizedBox(
                     width: 360,
-                    child: TextFormField(
+                    child: FasoInput(
                       controller: pwdCtrl,
-                      obscureText: hidePwd,
+                      hint: "Mot de passe",
                       enabled: !_loading,
-                      decoration: deco("Mot de passe").copyWith(
-                        suffixIcon: IconButton(
-                          onPressed: _loading ? null : () => setState(() => hidePwd = !hidePwd),
-                          icon: Icon(hidePwd ? Icons.visibility_off : Icons.visibility),
-                        ),
+                      obscure: hidePwd,
+                      borderRadius: 10,
+                      fillOpacity: 0.75,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 14,
                       ),
+                      suffixIcon: IconButton(
+                        onPressed:
+                        _loading ? null : () => setState(() => hidePwd = !hidePwd),
+                        icon: Icon(hidePwd ? Icons.visibility_off : Icons.visibility),
+                      ),
+                      onChanged: (_) => setState(() {}),
                       validator: (v) {
                         final value = (v ?? "");
                         if (value.isEmpty) return "Mot de passe obligatoire";
@@ -398,27 +453,38 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
+                  // ✅ CONFIRMATION MDP (FasoInput)
                   SizedBox(
                     width: 360,
-                    child: TextFormField(
+                    child: FasoInput(
                       controller: pwd2Ctrl,
-                      obscureText: hidePwd2,
+                      hint: "Confirmer le mot de passe",
                       enabled: !_loading,
-                      decoration: deco("Confirmer le mot de passe").copyWith(
-                        suffixIcon: IconButton(
-                          onPressed: _loading ? null : () => setState(() => hidePwd2 = !hidePwd2),
-                          icon: Icon(hidePwd2 ? Icons.visibility_off : Icons.visibility),
-                        ),
+                      obscure: hidePwd2,
+                      borderRadius: 10,
+                      fillOpacity: 0.75,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 14,
                       ),
+                      suffixIcon: IconButton(
+                        onPressed:
+                        _loading ? null : () => setState(() => hidePwd2 = !hidePwd2),
+                        icon: Icon(hidePwd2 ? Icons.visibility_off : Icons.visibility),
+                      ),
+                      onChanged: (_) => setState(() {}),
                       validator: (v) {
                         if ((v ?? "").isEmpty) return "Confirmation obligatoire";
-                        if (v != pwdCtrl.text) return "Les mots de passe ne correspondent pas";
+                        if (v != pwdCtrl.text) {
+                          return "Les mots de passe ne correspondent pas";
+                        }
                         return null;
                       },
                     ),
                   ),
                   const SizedBox(height: 12),
 
+                  // ✅ JE RECHERCHE (Dropdown inchangé)
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
@@ -427,8 +493,11 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       items: lookingForItems
                           .map((x) => DropdownMenuItem(value: x, child: Text(x)))
                           .toList(),
-                      onChanged: _loading ? null : (v) => setState(() => d.lookingFor = v ?? ""),
-                      validator: (v) => (v == null || v.isEmpty) ? "Choix obligatoire" : null,
+                      onChanged: _loading
+                          ? null
+                          : (v) => setState(() => d.lookingFor = v ?? ""),
+                      validator: (v) =>
+                      (v == null || v.isEmpty) ? "Choix obligatoire" : null,
                     ),
                   ),
 

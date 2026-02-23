@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'auth_screen.dart';
 
 class WelcomeScreen extends StatefulWidget {
@@ -18,29 +20,26 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   void initState() {
     super.initState();
 
-    // ✅ Animation "clignotement" sur 5 secondes
-    // On va faire 5 cycles (1 par seconde)
+    // 🔥 Animation halo (respiration douce)
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 1),
-    );
-
-    // répète 5 fois pendant 5 secondes
-    _controller.repeat(reverse: true);
-
-    // arrêt au bout de 5 secondes (sinon ça continue)
-    Future.delayed(const Duration(seconds: 5), () {
-      if (!mounted) return;
-      _controller.stop();
-    });
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
 
     // ✅ Redirection après 5 secondes
     _redirectTimer = Timer(const Duration(seconds: 5), () {
       if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const AuthScreen()),
-      );
+
+      final session = Supabase.instance.client.auth.currentSession;
+
+      if (session != null) {
+        Navigator.pushNamedAndRemoveUntil(context, '/swipe', (_) => false);
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const AuthScreen()),
+        );
+      }
     });
   }
 
@@ -53,46 +52,63 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    // ✅ On fait "blanc <-> normal" en alternance
-    // value proche de 1 = très blanc
     return Scaffold(
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Background
-          Image.asset('assets/images/intro.png', fit: BoxFit.cover),
+          // 🔹 Background image
+          Image.asset(
+            'assets/images/intro.png',
+            fit: BoxFit.cover,
+          ),
 
-          // Overlay sombre
-          Container(color: Colors.black.withOpacity(0.45)),
+          // 🔹 Overlay sombre
+          Container(
+            color: Colors.black.withOpacity(0.45),
+          ),
 
-          // Contenu
+          // 🔹 Contenu central
           Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // ✅ Logo qui clignote en blanc
                   AnimatedBuilder(
                     animation: _controller,
                     builder: (context, child) {
-                      // on mélange blanc/normal
-                      final t = _controller.value; // 0..1
-                      return ColorFiltered(
-                        colorFilter: ColorFilter.mode(
-                          Color.lerp(Colors.transparent, Colors.white, t)!,
-                          BlendMode.modulate,
-                        ),
-                        child: child,
+                      final t = _controller.value;
+
+                      return Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // 🔥 Halo lumineux blanc animé
+                          Container(
+                            width: 170,
+                            height: 170,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.white.withOpacity(0.4 + (t * 0.4)),
+                                  blurRadius: 40 + (t * 40),
+                                  spreadRadius: 5 + (t * 10),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // ✅ Logo fixe
+                          Image.asset(
+                            'assets/images/logo.png',
+                            width: 140,
+                          ),
+                        ],
                       );
                     },
-                    child: Image.asset(
-                      'assets/images/logo.png',
-                      width: 140,
-                    ),
                   ),
 
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 22),
 
                   const Text(
                     "🚀 Bienvenue sur FasoMatch",
