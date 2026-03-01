@@ -1,6 +1,14 @@
 import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+// ✅ Dates FR (intl)
+import 'package:intl/date_symbol_data_local.dart';
+
+// ✅ Android screenshots/recording
+import 'package:flutter_windowmanager/flutter_windowmanager.dart';
 
 import 'supabase_config.dart';
 import 'welcome_screen.dart';
@@ -9,6 +17,16 @@ import 'reset_password_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ✅ IMPORTANT: initialise la locale FR pour DateFormat('fr_FR')
+  await initializeDateFormatting('fr_FR', null);
+
+  // ✅ Android uniquement : blocage screenshots + screen recording
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    try {
+      await FlutterWindowManager.addFlags(FlutterWindowManager.FLAG_SECURE);
+    } catch (_) {}
+  }
 
   await Supabase.initialize(
     url: SupabaseConfig.url,
@@ -31,11 +49,7 @@ class FasoMatchApp extends StatelessWidget {
         scaffoldBackgroundColor: Colors.white,
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFE63946)),
       ),
-
-      // ✅ On garde ton router actuel
       home: const _AuthRouter(),
-
-      // ✅ Routes globales (pour navigation depuis BiometricOptinScreen etc.)
       routes: {
         '/swipe': (_) => const SwipeScreen(),
       },
@@ -65,7 +79,6 @@ class _AuthRouterState extends State<_AuthRouter> {
         setState(() => _isRecovery = true);
       }
 
-      // ✅ optionnel: si tu veux revenir à l’app normale après reset
       if (event == AuthChangeEvent.signedIn ||
           event == AuthChangeEvent.signedOut) {
         if (mounted) setState(() {});
@@ -81,12 +94,9 @@ class _AuthRouterState extends State<_AuthRouter> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isRecovery) {
-      return const ResetPasswordScreen();
-    }
+    if (_isRecovery) return const ResetPasswordScreen();
 
     final session = Supabase.instance.client.auth.currentSession;
-
     return (session != null) ? const SwipeScreen() : const WelcomeScreen();
   }
 }

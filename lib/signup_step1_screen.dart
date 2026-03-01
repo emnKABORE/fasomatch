@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
@@ -117,6 +118,18 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     super.dispose();
   }
 
+  /// ✅ Redirect auto :
+  /// - Web (Chrome localhost): utilise l’origin courant (ex: http://localhost:58117)
+  /// - Mobile/prod: utilise ton domaine
+  String _emailRedirectTo() {
+    if (kIsWeb) {
+      // ex: http://localhost:58117/auth/callback
+      return "${Uri.base.origin}/auth/callback";
+    }
+    // prod
+    return "https://fasomatch.app/auth/callback";
+  }
+
   InputDecoration deco(String hint) => InputDecoration(
     hintText: hint,
     filled: true,
@@ -177,22 +190,32 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     d.country = _phoneCountryISO;
   }
 
-  String _friendlyAuthError(Object e) {
-    final msg = e.toString().toLowerCase();
+  String _friendlyAuthError(String raw) {
+    final msg = raw.toLowerCase();
 
     if (msg.contains('already registered') ||
         msg.contains('user already') ||
         (msg.contains('email') && msg.contains('already'))) {
       return "Cet email est déjà utilisé. Essaie de te connecter.";
     }
-    if (msg.contains('invalid') && msg.contains('email')) return "Email invalide.";
-    if (msg.contains('password') && msg.contains('short')) {
-      return "Mot de passe trop court.";
+    if (msg.contains('invalid') && msg.contains('email')) {
+      return "Email invalide.";
     }
-    if (msg.contains('failed to fetch') || msg.contains('network')) {
+    if (msg.contains('password') && (msg.contains('short') || msg.contains('6'))) {
+      return "Mot de passe trop court (min 6 caractères).";
+    }
+    if (msg.contains('failed to fetch') ||
+        msg.contains('network') ||
+        msg.contains('socket')) {
       return "Problème de connexion internet. Réessaie.";
     }
-    return "Erreur: ${e.toString()}";
+
+    // cas typique: redirect url not allowed / mail provider / etc.
+    if (msg.contains('redirect') || msg.contains('url')) {
+      return "Erreur de redirection email. Vérifie les Redirect URLs dans Supabase Auth.";
+    }
+
+    return "Erreur: $raw";
   }
 
   Future<void> _signupWithSupabase() async {
@@ -202,12 +225,35 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     });
 
     try {
+      _saveDraftFromControllers();
+      final d = widget.draft;
+
       final email = emailCtrl.text.trim();
       final password = pwdCtrl.text;
       final supabase = Supabase.instance.client;
 
-      final response =
-      await supabase.auth.signUp(email: email, password: password);
+      final redirectTo = _emailRedirectTo();
+      debugPrint("SIGNUP redirectTo=$redirectTo email=$email");
+
+      final response = await supabase.auth.signUp(
+        email: email,
+        password: password,
+        emailRedirectTo: redirectTo,
+        data: {
+          "first_name": d.firstName,
+          "last_name": d.lastName,
+          "phone": d.phone,
+          "country_iso": d.country,
+          "gender": d.gender,
+          "city": d.city,
+          "looking_for": d.lookingFor,
+        },
+      );
+
+      debugPrint(
+        "SIGNUP OK user=${response.user?.id} session=${response.session != null} confirmedAt=${response.user?.emailConfirmedAt}",
+      );
+
       final userId = response.user?.id;
 
       if (!mounted) return;
@@ -219,11 +265,15 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
         ),
       );
     } on AuthException catch (e) {
+      // ✅ C’EST ÇA QU’IL FAUT LIRE (le vrai message)
+      debugPrint("AUTH ERROR: status=${e.statusCode} message=${e.message}");
+
       if (!mounted) return;
       setState(() => _errorMsg = _friendlyAuthError(e.message));
     } catch (e) {
+      debugPrint("UNKNOWN ERROR: $e");
       if (!mounted) return;
-      setState(() => _errorMsg = _friendlyAuthError(e));
+      setState(() => _errorMsg = _friendlyAuthError(e.toString()));
     } finally {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -296,7 +346,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     const SizedBox(height: 12),
                   ],
 
-                  // ✅ PRÉNOM (FasoInput)
+                  // ✅ PRÉNOM
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -316,7 +366,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ NOM (FasoInput)
+                  // ✅ NOM
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -336,7 +386,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ SEXE (Dropdown inchangé)
+                  // ✅ SEXE
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
@@ -354,7 +404,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ VILLE (Dropdown inchangé)
+                  // ✅ VILLE
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
@@ -372,7 +422,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ TÉLÉPHONE (IntlPhoneField inchangé)
+                  // ✅ TÉLÉPHONE
                   SizedBox(
                     width: 360,
                     child: IntlPhoneField(
@@ -389,8 +439,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       },
                       validator: (phone) {
                         final complete = phone?.completeNumber ?? _phoneComplete;
-                        final digits =
-                        complete.replaceAll(RegExp(r'[^0-9]'), '');
+                        final digits = complete.replaceAll(RegExp(r'[^0-9]'), '');
                         if (digits.length < 8) return "Téléphone invalide";
                         return null;
                       },
@@ -398,7 +447,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ EMAIL (FasoInput)
+                  // ✅ EMAIL
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -423,7 +472,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ MOT DE PASSE (FasoInput)
+                  // ✅ MOT DE PASSE
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -438,8 +487,9 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         vertical: 14,
                       ),
                       suffixIcon: IconButton(
-                        onPressed:
-                        _loading ? null : () => setState(() => hidePwd = !hidePwd),
+                        onPressed: _loading
+                            ? null
+                            : () => setState(() => hidePwd = !hidePwd),
                         icon: Icon(hidePwd ? Icons.visibility_off : Icons.visibility),
                       ),
                       onChanged: (_) => setState(() {}),
@@ -453,7 +503,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ CONFIRMATION MDP (FasoInput)
+                  // ✅ CONFIRMATION MDP
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -468,8 +518,9 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         vertical: 14,
                       ),
                       suffixIcon: IconButton(
-                        onPressed:
-                        _loading ? null : () => setState(() => hidePwd2 = !hidePwd2),
+                        onPressed: _loading
+                            ? null
+                            : () => setState(() => hidePwd2 = !hidePwd2),
                         icon: Icon(hidePwd2 ? Icons.visibility_off : Icons.visibility),
                       ),
                       onChanged: (_) => setState(() {}),
@@ -484,7 +535,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ JE RECHERCHE (Dropdown inchangé)
+                  // ✅ JE RECHERCHE
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(

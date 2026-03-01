@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'signup_draft.dart';
 import 'ui/app_colors.dart';
@@ -12,7 +14,40 @@ import 'ui/primary_button.dart';
 import 'ui/birthdate_picker_field.dart';
 import 'ui/faso_loading_overlay.dart';
 
-import 'biometric_optin_screen.dart'; // ✅ tu l’as déjà
+import 'biometric_optin_screen.dart';
+
+/// ------------------------------------------------------------
+/// ✅ Liens juridiques (Notion pour l’instant)
+/// ------------------------------------------------------------
+class LegalLinks {
+  static const privacy =
+      "https://walnut-damselfly-2b4.notion.site/Politique-de-confidentialit-314de39099da801f953ed31f7bb02b77?source=copy_link";
+
+  static const legal =
+      "https://walnut-damselfly-2b4.notion.site/MENTIONS-L-GALES-Version-conforme-Burkina-314de39099da8048840feffd0a69cc00?pvs=73";
+
+  static const cgu =
+      "https://walnut-damselfly-2b4.notion.site/CGU-Version-soci-t-314de39099da80ed9b14d739cf80a751?source=copy_link";
+
+  /// (optionnel) mail support affiché dans les textes
+  static const supportEmail = "support@fasomatch.app";
+}
+
+/// ------------------------------------------------------------
+/// ✅ Ouvrir un lien externe
+/// ------------------------------------------------------------
+Future<void> openUrl(String url) async {
+  final uri = Uri.parse(url);
+
+  final ok = await launchUrl(
+    uri,
+    mode: LaunchMode.externalApplication,
+  );
+
+  if (!ok) {
+    throw Exception("Impossible d'ouvrir le lien: $url");
+  }
+}
 
 class SignupStep2Screen extends StatefulWidget {
   final SignupDraft draft;
@@ -80,11 +115,6 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
     );
   }
 
-  void _showSnack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _pickImage(int index) async {
     final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
     if (x == null) return;
@@ -104,7 +134,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
     final d = widget.draft;
     final birthOk = d.birthdate != null;
     final ageOk = d.birthdate != null && _ageFrom(d.birthdate!) >= 18;
-    final photoOk = _photo1 != null; // ✅ photo 1 obligatoire
+    final photoOk = _photo1 != null;
     final termsOk = d.acceptedTerms;
 
     return birthOk && ageOk && photoOk && termsOk && !isLoading;
@@ -135,13 +165,9 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
     final d = widget.draft;
     final supabase = Supabase.instance.client;
 
-    // Bio facultative ✅
     d.bio = _bioCtrl.text.trim();
 
-    // Upload photo1 obligatoire ✅
     final photo1Url = await _uploadPhoto(userId: authedUserId, file: _photo1!, slot: "1");
-
-    // Upload optionnels ✅
     final photo2Url =
     (_photo2 != null) ? await _uploadPhoto(userId: authedUserId, file: _photo2!, slot: "2") : null;
     final photo3Url =
@@ -173,7 +199,6 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
   Future<void> _onCreatePressed() async {
     final d = widget.draft;
 
-    // Validations + alert 18+ ✅
     if (d.birthdate == null) {
       await _showDialog(
         title: "Date de naissance",
@@ -202,12 +227,11 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
     if (!d.acceptedTerms) {
       await _showDialog(
         title: "Conditions",
-        message: "⚠️ Tu dois accepter les CGU et la Politique de confidentialité.",
+        message: "⚠️ Tu dois accepter les CGU, la Politique de confidentialité et les Mentions légales.",
       );
       return;
     }
 
-    // Message “confirme ton mail” ✅
     await _showDialog(
       title: "Dernière étape",
       message:
@@ -215,17 +239,12 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       okText: "J’ai compris",
     );
 
-    // 👉 on passe à l’écran d’attente qui détecte la confirmation automatiquement
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => EmailConfirmWaitScreen(
           draft: widget.draft,
-          bioText: _bioCtrl.text,
-          photo1: _photo1!,
-          photo2: _photo2,
-          photo3: _photo3,
           finalizeProfile: _finalizeProfileAfterLogin,
         ),
       ),
@@ -244,14 +263,11 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
           backgroundColor: AppColors.bg,
           elevation: 0,
           centerTitle: true,
-
-          // ✅ Fix logo visible (plus d’écrasement)
           toolbarHeight: 120,
           title: const Padding(
             padding: EdgeInsets.only(top: 10, bottom: 10),
             child: AppLogo(size: 80),
           ),
-
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, color: Colors.black87),
             onPressed: isLoading ? null : () => Navigator.pop(context),
@@ -265,7 +281,6 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ✅ Date
                   SizedBox(
                     width: 360,
                     child: BirthdatePickerField(
@@ -310,7 +325,6 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
 
                   const SizedBox(height: 20),
 
-                  // ✅ Bio facultative
                   SizedBox(
                     width: 520,
                     child: TextFormField(
@@ -334,17 +348,16 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                   const SizedBox(height: 14),
 
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Checkbox(
                         value: d.acceptedTerms,
-                        onChanged: isLoading
-                            ? null
-                            : (v) => setState(() => d.acceptedTerms = v ?? false),
+                        onChanged: isLoading ? null : (v) => setState(() => d.acceptedTerms = v ?? false),
                       ),
-                      const Expanded(
-                        child: Text(
-                          "J'accepte les CGU et la Politique de confidentialité",
-                          style: TextStyle(decoration: TextDecoration.underline),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: _LegalConsentText(),
                         ),
                       ),
                     ],
@@ -361,6 +374,8 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                       onPressed: _canSubmit ? _onCreatePressed : null,
                     ),
                   ),
+
+                  const SizedBox(height: 16),
                 ],
               ),
             ),
@@ -396,25 +411,64 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
   }
 }
 
+/// ------------------------------------------------------------
+/// ✅ Texte juridique cliquable
+/// ------------------------------------------------------------
+class _LegalConsentText extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final base = TextStyle(color: Colors.black.withOpacity(0.8));
+    final link = const TextStyle(
+      decoration: TextDecoration.underline,
+      fontWeight: FontWeight.w700,
+    );
+
+    return RichText(
+      text: TextSpan(
+        style: base,
+        children: [
+          const TextSpan(text: "J’accepte les "),
+          TextSpan(
+            text: "CGU",
+            style: link,
+            recognizer: TapGestureRecognizer()..onTap = () => openUrl(LegalLinks.cgu),
+          ),
+          const TextSpan(text: ", la "),
+          TextSpan(
+            text: "Politique de confidentialité",
+            style: link,
+            recognizer: TapGestureRecognizer()..onTap = () => openUrl(LegalLinks.privacy),
+          ),
+          const TextSpan(text: " et les "),
+          TextSpan(
+            text: "Mentions légales",
+            style: link,
+            recognizer: TapGestureRecognizer()..onTap = () => openUrl(LegalLinks.legal),
+          ),
+          const TextSpan(text: "."),
+          const TextSpan(text: "\n\nSupport : "),
+          TextSpan(
+            text: LegalLinks.supportEmail,
+            style: link,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => openUrl("mailto:${LegalLinks.supportEmail}"),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// ---------------------------------------------------------------------------
 /// Écran d’attente : détecte la confirmation automatiquement
 /// ---------------------------------------------------------------------------
 class EmailConfirmWaitScreen extends StatefulWidget {
   final SignupDraft draft;
-  final String bioText;
-  final XFile photo1;
-  final XFile? photo2;
-  final XFile? photo3;
-
   final Future<void> Function(String authedUserId) finalizeProfile;
 
   const EmailConfirmWaitScreen({
     super.key,
     required this.draft,
-    required this.bioText,
-    required this.photo1,
-    required this.photo2,
-    required this.photo3,
     required this.finalizeProfile,
   });
 
@@ -452,7 +506,6 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
     try {
       _ticks++;
 
-      // ⛔ limite de temps (ex: 4 minutes)
       if (_ticks > 80) {
         setState(() => _status = "Toujours pas confirmé. Vérifie tes spams ou renvoie le mail.");
         _busy = false;
@@ -463,7 +516,6 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
 
       final supabase = Supabase.instance.client;
 
-      // ✅ Dès que l’email est confirmé, ce login réussit (même si confirmé sur autre appareil)
       final res = await supabase.auth.signInWithPassword(
         email: widget.draft.email.trim(),
         password: widget.draft.password,
@@ -476,7 +528,6 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
         return;
       }
 
-      // Vérif email confirmé
       final confirmed = user.emailConfirmedAt != null;
       if (!confirmed) {
         setState(() => _status = "Email pas encore confirmé…");
@@ -484,7 +535,6 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
         return;
       }
 
-      // ✅ confirm détectée → on finalize profil
       _timer?.cancel();
       setState(() => _status = "Confirmation détectée ✅ Finalisation du profil…");
 
@@ -492,7 +542,6 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
 
       if (!mounted) return;
 
-      // ✅ Welcome
       await showDialog(
         context: context,
         builder: (_) => AlertDialog(
@@ -511,13 +560,11 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
 
       if (!mounted) return;
 
-      // ✅ biométrie
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const BiometricOptinScreen()),
       );
-    } catch (e) {
-      // le plus fréquent ici : email pas confirmé → Supabase renvoie une erreur
+    } catch (_) {
       setState(() => _status = "En attente de confirmation email…");
     } finally {
       _busy = false;
@@ -558,16 +605,6 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
                   "📩 Confirme ton email puis reviens ici.\nDès que c’est confirmé, FasoMatch continue tout seul.",
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.black.withOpacity(0.65)),
-                ),
-                const SizedBox(height: 18),
-                PrimaryButton(
-                  text: "Aller au Swipe",
-                  width: 200,
-                  height: 42,
-                  onPressed: () {
-                    // ✅ si tu veux permettre d'aller au swipe après biométrie
-                    Navigator.pushReplacementNamed(context, '/swipe');
-                  },
                 ),
               ],
             ),
