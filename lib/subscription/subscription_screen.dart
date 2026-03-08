@@ -1,5 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_windowmanager/flutter_windowmanager.dart';
+
+import '../ui/app_logo.dart';
+import '../ui/app_colors.dart';
 
 enum PlanType { free, premium, ultra }
 
@@ -10,302 +16,304 @@ class SubscriptionScreen extends StatefulWidget {
   State<SubscriptionScreen> createState() => _SubscriptionScreenState();
 }
 
-class _SubscriptionScreenState extends State<SubscriptionScreen> {
+class _SubscriptionScreenState extends State<SubscriptionScreen>
+    with WidgetsBindingObserver {
+  PlanType _currentPlan = PlanType.free;
+  bool _loadingPlan = true;
+  Timer? _paymentPollingTimer;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _enableScreenshotBlock();
+    _loadCurrentPlan();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _paymentPollingTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadCurrentPlan();
+    }
   }
 
   Future<void> _enableScreenshotBlock() async {
-    // Android: bloque screenshots/recording via FLAG_SECURE
-    // iOS: pas de blocage parfait natif (on gèrera plus tard si tu veux)
     try {
       await FlutterWindowManager.addFlags(FlutterWindowManager.FLAG_SECURE);
     } catch (_) {}
   }
 
-  @override
-  void dispose() {
-    // Optionnel: tu peux laisser FLAG_SECURE actif app-wide.
-    super.dispose();
+  PlanType _parsePlan(String plan) {
+    switch (plan) {
+      case 'premium':
+        return PlanType.premium;
+      case 'ultra':
+        return PlanType.ultra;
+      default:
+        return PlanType.free;
+    }
   }
 
-  void _onSubscribe(PlanType plan) {
-    // Pour l’instant: on garde un stub.
-    // Étape suivante: brancher PayDunya (checkout + callback + activation premium)
-    final label = switch (plan) {
-      PlanType.free => "Gratuit",
-      PlanType.premium => "Premium",
-      PlanType.ultra => "Ultra",
-    };
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Choix: $label — on branche PayDunya juste après ✅")),
-    );
+  String _planLabel(PlanType p) {
+    switch (p) {
+      case PlanType.premium:
+        return "Premium";
+      case PlanType.ultra:
+        return "Ultra";
+      default:
+        return "Gratuit";
+    }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    const primaryRed = Color(0xFFE63946);
-    const premiumGold = Color(0xFFD4AF37);
-    const ultraPurple = Color(0xFF6D28D9);
-    const softGray = Color(0xFFF5F5F5);
+  Future<void> _loadCurrentPlan() async {
+    if (mounted) {
+      setState(() => _loadingPlan = true);
+    }
 
-    final plans = <_PlanCardData>[
-      _PlanCardData(
-        type: PlanType.free,
-        title: "Gratuit",
-        headerColor: Colors.green,
-        priceText: "0 F / mois",
-        buttonColor: primaryRed,
-        features: const [
-          "20 likes / jour",
-          "1 Super Like / jour",
-          "Accès à tous les filtres",
-          "Chat après match uniquement",
-          "Blocage des captures d’écrans",
-        ],
-      ),
-      _PlanCardData(
-        type: PlanType.premium,
-        title: "Premium",
-        headerColor: premiumGold,
-        priceText: "2 000 F / mois",
-        buttonColor: primaryRed,
-        features: const [
-          "Swipes illimités",
-          "5 Super Likes / jour",
-          "Filtres",
-          "Chat après match uniquement",
-          "Voir qui m’a liké",
-          "1 chance au tirage “Cadeau du mois” (30 000 CFA)",
-          "Blocage des captures d’écrans",
-        ],
-      ),
-      _PlanCardData(
-        type: PlanType.ultra,
-        title: "Ultra",
-        headerColor: ultraPurple,
-        priceText: "5 000 F / mois",
-        buttonColor: primaryRed,
-        features: const [
-          "Tout Premium",
-          "Super Likes illimités",
-          "Mode discret (bloquer des profils via numéros de téléphone)",
-          "2 chances au tirage “Cadeau du mois” (30 000 CFA)",
-          "Blocage des captures d’écrans",
-        ],
-      ),
-    ];
+    try {
+      final client = Supabase.instance.client;
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
-        centerTitle: true,
-        title: Column(
-          children: const [
-            SizedBox(height: 2),
-            Text("FasoMatch", style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700)),
-            SizedBox(height: 2),
-          ],
-        ),
-      ),
-      body: LayoutBuilder(
-        builder: (context, c) {
-          final isWide = c.maxWidth >= 900;
+      final res = await client.rpc('get_current_plan');
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-            child: Column(
-              children: [
-                const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: softGray,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Text(
-                    "Choisis ton abonnement FasoMatch",
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                ),
-                const SizedBox(height: 16),
+      final row = (res as List).isNotEmpty ? res.first : null;
 
-                // CARTES (3 colonnes sur grand écran, sinon vertical)
-                if (isWide)
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (int i = 0; i < plans.length; i++) ...[
-                        Expanded(child: _PlanCard(data: plans[i], onSubscribe: _onSubscribe)),
-                        if (i != plans.length - 1) const SizedBox(width: 14),
-                      ],
-                    ],
-                  )
-                else
-                  Column(
-                    children: [
-                      for (final p in plans) ...[
-                        _PlanCard(data: p, onSubscribe: _onSubscribe),
-                        const SizedBox(height: 14),
-                      ]
-                    ],
-                  ),
+      if (row == null) throw Exception("No plan");
 
-                const SizedBox(height: 10),
-                const Text("Paiement via", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 10),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 18,
-                  runSpacing: 10,
-                  children: [
-                    _PaymentLogo(path: "assets/payments/orange_money.png", label: "Orange Money"),
-                    _PaymentLogo(path: "assets/payments/moov_money.png", label: "Moov Money"),
-                  ],
-                ),
-              ],
-            ),
-          );
+      final planStr = (row['plan'] ?? 'free').toString().toLowerCase();
+
+      final plan = _parsePlan(planStr);
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentPlan = plan;
+        _loadingPlan = false;
+      });
+    } catch (e) {
+      debugPrint("get_current_plan error: $e");
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentPlan = PlanType.free;
+        _loadingPlan = false;
+      });
+    }
+  }
+
+  Future<void> _startPayDunyaCheckout(PlanType plan) async {
+    final client = Supabase.instance.client;
+    final user = client.auth.currentUser;
+
+    if (user == null) return;
+
+    final amount = plan == PlanType.premium ? 2000 : 5000;
+
+    try {
+      _showLoader("Préparation du paiement...");
+
+      final res = await client.functions.invoke(
+        'paydunya-create-invoice',
+        body: {
+          "plan": plan.name,
+          "amount": amount,
+          "user_id": user.id,
         },
+      );
+
+      Navigator.pop(context);
+
+      final url = res.data["checkout_url"];
+
+      await launchUrl(Uri.parse(url),
+          mode: LaunchMode.externalApplication);
+
+      _startPaymentPolling(plan);
+    } catch (e) {
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text("Erreur paiement : $e")));
+    }
+  }
+
+  void _startPaymentPolling(PlanType plan) {
+    _paymentPollingTimer?.cancel();
+
+    _showLoader("Vérification du paiement...");
+
+    int attempts = 0;
+
+    _paymentPollingTimer =
+        Timer.periodic(const Duration(seconds: 5), (timer) async {
+          attempts++;
+
+          await Supabase.instance.client.auth.refreshSession();
+
+          await _loadCurrentPlan();
+
+          if (_currentPlan == plan) {
+            timer.cancel();
+            Navigator.pop(context);
+
+            ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("Abonnement ${_planLabel(plan)} activé")));
+
+            return;
+          }
+
+          if (attempts > 36) {
+            timer.cancel();
+            Navigator.pop(context);
+          }
+        });
+  }
+
+  void _showLoader(String text) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        child: Padding(
+          padding: const EdgeInsets.all(25),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const AppLogo(size: 90),
+              const SizedBox(height: 20),
+              const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              Text(text)
+            ],
+          ),
+        ),
       ),
     );
   }
-}
 
-class _PlanCardData {
-  final PlanType type;
-  final String title;
-  final Color headerColor;
-  final String priceText;
-  final Color buttonColor;
-  final List<String> features;
-
-  _PlanCardData({
-    required this.type,
-    required this.title,
-    required this.headerColor,
-    required this.priceText,
-    required this.buttonColor,
-    required this.features,
-  });
-}
-
-class _PlanCard extends StatelessWidget {
-  final _PlanCardData data;
-  final void Function(PlanType) onSubscribe;
-
-  const _PlanCard({required this.data, required this.onSubscribe});
-
-  @override
-  Widget build(BuildContext context) {
-    const borderGray = Color(0xFFE5E7EB);
+  Widget _planCard({
+    required String title,
+    required String price,
+    required List<String> features,
+    required PlanType type,
+  }) {
+    final isCurrent = type == _currentPlan;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      margin: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: borderGray),
         color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 14,
-            spreadRadius: 0,
-            offset: const Offset(0, 6),
-            color: Colors.black.withValues(alpha: 0.06),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // titre
-          Row(
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(color: data.headerColor, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                data.title,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-              ),
-            ],
-          ),
+          Text(title,
+              style:
+              const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
-          const Text("Avantages :", style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-
-          ...data.features.map((t) => Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("•  ", style: TextStyle(fontSize: 16, height: 1.25)),
-                Expanded(child: Text(t, style: const TextStyle(fontSize: 14, height: 1.25))),
-              ],
-            ),
+          ...features.map((e) => Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text("• $e"),
           )),
-
           const SizedBox(height: 10),
-          Text(
-            data.priceText,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-
-          SizedBox(
-            width: double.infinity,
-            height: 44,
+          Text(price,
+              style:
+              const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+          const SizedBox(height: 12),
+          Center(
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: data.buttonColor,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                backgroundColor: isCurrent ? Colors.black : Colors.red,
               ),
-              onPressed: () => onSubscribe(data.type),
-              child: const Text("S’abonner", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+              onPressed: () => _startPayDunyaCheckout(type),
+              child: Text(
+                  isCurrent ? "Rester ${_planLabel(type)}" : "S'abonner"),
             ),
-          ),
+          )
         ],
       ),
     );
   }
-}
-
-class _PaymentLogo extends StatelessWidget {
-  final String path;
-  final String label;
-
-  const _PaymentLogo({required this.path, required this.label});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Container(
-          width: 62,
-          height: 62,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE5E7EB)),
-          ),
-          padding: const EdgeInsets.all(10),
-          child: Image.asset(path, fit: BoxFit.contain),
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      appBar: AppBar(
+        centerTitle: true,
+        backgroundColor: AppColors.bg,
+        elevation: 0,
+        title: const AppLogo(size: 75),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            const Text("Choisis ton abonnement FasoMatch",
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Image.asset("assets/images/orange_money sample.png", height: 75),
+                const SizedBox(width: 75),
+                Image.asset("assets/images/moov_money sample.png", height: 75),
+              ],
+            ),
+            const SizedBox(height: 75),
+            _planCard(
+              title: "Gratuit",
+              price: "0 F / mois",
+              type: PlanType.free,
+              features: const [
+                "20 likes / jour",
+                "1 Super Like / jour",
+                "1 retour / jour",
+                "Blocage capture écran",
+              ],
+            ),
+
+            _planCard(
+              title: "Premium",
+              price: "2 000 F / mois",
+              type: PlanType.premium,
+              features: const [
+                "Swipes illimités",
+                "5 Super Likes",
+                "5 retours",
+                "Blocage capture écran",
+                "Voir qui t’a liké",
+                "1 chance tirage cadeau du mois (valeur 30 000 CFA)"
+              ],
+            ),
+
+            _planCard(
+              title: "Ultra",
+              price: "5 000 F / mois",
+              type: PlanType.ultra,
+              features: const [
+                "Tout Premium",
+                "Super Likes illimités",
+                "Retours illimités",
+                "Blocage capture écran",
+                "Mode discret",
+                "2 chances tirage cadeau du mois (valeur 30 000 CFA)"
+              ],
+            ),
+          ],
         ),
-        const SizedBox(height: 6),
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-      ],
+      ),
     );
   }
 }

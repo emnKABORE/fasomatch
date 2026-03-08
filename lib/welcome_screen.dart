@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'auth_screen.dart';
 
@@ -20,26 +19,20 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   void initState() {
     super.initState();
 
-    // 🔥 Animation halo (respiration douce)
+    // Animation respiration du halo
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
 
-    // ✅ Redirection après 5 secondes
+    // Redirection après 5 secondes
     _redirectTimer = Timer(const Duration(seconds: 5), () {
       if (!mounted) return;
 
-      final session = Supabase.instance.client.auth.currentSession;
-
-      if (session != null) {
-        Navigator.pushNamedAndRemoveUntil(context, '/swipe', (_) => false);
-      } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const AuthScreen()),
-        );
-      }
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+      );
     });
   }
 
@@ -56,18 +49,18 @@ class _WelcomeScreenState extends State<WelcomeScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // 🔹 Background image
+          // Image de fond
           Image.asset(
             'assets/images/intro.png',
             fit: BoxFit.cover,
           ),
 
-          // 🔹 Overlay sombre
+          // Overlay sombre
           Container(
             color: Colors.black.withOpacity(0.45),
           ),
 
-          // 🔹 Contenu central
+          // Contenu
           Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -82,7 +75,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                       return Stack(
                         alignment: Alignment.center,
                         children: [
-                          // 🔥 Halo lumineux blanc animé
+                          // Halo lumineux animé
                           Container(
                             width: 170,
                             height: 170,
@@ -90,7 +83,8 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                               shape: BoxShape.circle,
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.white.withOpacity(0.4 + (t * 0.4)),
+                                  color: Colors.white.withOpacity(
+                                      0.4 + (t * 0.4)),
                                   blurRadius: 40 + (t * 40),
                                   spreadRadius: 5 + (t * 10),
                                 ),
@@ -98,7 +92,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                             ),
                           ),
 
-                          // ✅ Logo fixe
+                          // Logo
                           Image.asset(
                             'assets/images/logo.png',
                             width: 140,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
@@ -16,9 +17,6 @@ import 'ui/faso_loading_overlay.dart';
 
 import 'biometric_optin_screen.dart';
 
-/// ------------------------------------------------------------
-/// ✅ Liens juridiques (Notion pour l’instant)
-/// ------------------------------------------------------------
 class LegalLinks {
   static const privacy =
       "https://walnut-damselfly-2b4.notion.site/Politique-de-confidentialit-314de39099da801f953ed31f7bb02b77?source=copy_link";
@@ -29,13 +27,9 @@ class LegalLinks {
   static const cgu =
       "https://walnut-damselfly-2b4.notion.site/CGU-Version-soci-t-314de39099da80ed9b14d739cf80a751?source=copy_link";
 
-  /// (optionnel) mail support affiché dans les textes
   static const supportEmail = "support@fasomatch.app";
 }
 
-/// ------------------------------------------------------------
-/// ✅ Ouvrir un lien externe
-/// ------------------------------------------------------------
 Future<void> openUrl(String url) async {
   final uri = Uri.parse(url);
 
@@ -116,7 +110,10 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
   }
 
   Future<void> _pickImage(int index) async {
-    final x = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    final x = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+    );
     if (x == null) return;
 
     setState(() {
@@ -124,9 +121,9 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       if (index == 2) _photo2 = x;
       if (index == 3) _photo3 = x;
 
-      if (index == 1) widget.draft.photo1Path = x.name;
-      if (index == 2) widget.draft.photo2Path = x.name;
-      if (index == 3) widget.draft.photo3Path = x.name;
+      if (index == 1) widget.draft.photo1Path = x.path;
+      if (index == 2) widget.draft.photo2Path = x.path;
+      if (index == 3) widget.draft.photo3Path = x.path;
     });
   }
 
@@ -167,31 +164,42 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
 
     d.bio = _bioCtrl.text.trim();
 
-    final photo1Url = await _uploadPhoto(userId: authedUserId, file: _photo1!, slot: "1");
-    final photo2Url =
-    (_photo2 != null) ? await _uploadPhoto(userId: authedUserId, file: _photo2!, slot: "2") : null;
-    final photo3Url =
-    (_photo3 != null) ? await _uploadPhoto(userId: authedUserId, file: _photo3!, slot: "3") : null;
+    final photo1Url = await _uploadPhoto(
+      userId: authedUserId,
+      file: _photo1!,
+      slot: "1",
+    );
+
+    final photo2Url = (_photo2 != null)
+        ? await _uploadPhoto(userId: authedUserId, file: _photo2!, slot: "2")
+        : null;
+
+    final photo3Url = (_photo3 != null)
+        ? await _uploadPhoto(userId: authedUserId, file: _photo3!, slot: "3")
+        : null;
+
+    final List<String> photoUrls = [
+      photo1Url,
+      if (photo2Url != null) photo2Url,
+      if (photo3Url != null) photo3Url,
+    ];
 
     d.applyPlanDefaults("gratuit");
 
     await supabase.from('profiles').upsert({
       'id': authedUserId,
       'first_name': d.firstName,
-      'last_name': d.lastName,
-      'phone': d.phone,
-      'email': d.email,
+      'birth_year': d.birthdate!.year,
       'gender': d.gender,
-      'city': d.city,
-      'country': d.country,
       'looking_for': d.lookingFor,
-      'birthdate': d.birthdate!.toIso8601String().substring(0, 10),
       'bio': d.bio.isEmpty ? null : d.bio,
-      'photo1_url': photo1Url,
-      'photo2_url': photo2Url,
-      'photo3_url': photo3Url,
+      'city': d.city,
+      'interests': null,
+      'avatar_url': photo1Url,
+      'photos': photoUrls,
+      'is_verified': false,
       'plan': 'gratuit',
-      'accepted_terms': d.acceptedTerms,
+      'phone': d.phone,
       'created_at': DateTime.now().toIso8601String(),
     });
   }
@@ -227,7 +235,8 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
     if (!d.acceptedTerms) {
       await _showDialog(
         title: "Conditions",
-        message: "⚠️ Tu dois accepter les CGU, la Politique de confidentialité et les Mentions légales.",
+        message:
+        "⚠️ Tu dois accepter les CGU, la Politique de confidentialité et les Mentions légales.",
       );
       return;
     }
@@ -292,39 +301,36 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                         if (picked != null && _ageFrom(picked) < 18) {
                           await _showDialog(
                             title: "Accès interdit",
-                            message: "⛔ Tu dois avoir 18 ans minimum pour utiliser FasoMatch.",
+                            message:
+                            "⛔ Tu dois avoir 18 ans minimum pour utiliser FasoMatch.",
                           );
                         }
                       },
                     ),
                   ),
-
                   const SizedBox(height: 20),
-
                   Wrap(
                     spacing: 16,
                     runSpacing: 16,
                     children: [
                       _photoBox(
                         label: "1er photo\n(obligatoire)",
-                        has: _photo1 != null,
+                        file: _photo1,
                         onTap: isLoading ? null : () => _pickImage(1),
                       ),
                       _photoBox(
                         label: "2ème photo\n(facultatif)",
-                        has: _photo2 != null,
+                        file: _photo2,
                         onTap: isLoading ? null : () => _pickImage(2),
                       ),
                       _photoBox(
                         label: "3ème photo\n(facultatif)",
-                        has: _photo3 != null,
+                        file: _photo3,
                         onTap: isLoading ? null : () => _pickImage(3),
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 20),
-
                   SizedBox(
                     width: 520,
                     child: TextFormField(
@@ -335,24 +341,27 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                         hintText: "Centres d’intérêts, loisirs… (facultatif)",
                         filled: true,
                         fillColor: Colors.white.withOpacity(0.75),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: Colors.black54, width: 1.2),
+                          borderSide:
+                          const BorderSide(color: Colors.black54, width: 1.2),
                         ),
                       ),
                       enabled: !isLoading,
                     ),
                   ),
-
                   const SizedBox(height: 14),
-
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Checkbox(
                         value: d.acceptedTerms,
-                        onChanged: isLoading ? null : (v) => setState(() => d.acceptedTerms = v ?? false),
+                        onChanged: isLoading
+                            ? null
+                            : (v) => setState(() => d.acceptedTerms = v ?? false),
                       ),
                       Expanded(
                         child: Padding(
@@ -362,9 +371,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 16),
-
                   Center(
                     child: PrimaryButton(
                       text: "Créer son compte",
@@ -374,7 +381,6 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                       onPressed: _canSubmit ? _onCreatePressed : null,
                     ),
                   ),
-
                   const SizedBox(height: 16),
                 ],
               ),
@@ -387,7 +393,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
 
   Widget _photoBox({
     required String label,
-    required bool has,
+    required XFile? file,
     required VoidCallback? onTap,
   }) {
     return InkWell(
@@ -395,25 +401,68 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       child: Container(
         width: 120,
         height: 120,
-        alignment: Alignment.center,
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           border: Border.all(color: Colors.black54, width: 1.2),
           borderRadius: BorderRadius.circular(12),
           color: Colors.white.withOpacity(0.75),
         ),
-        child: Text(
-          has ? "✅\nPhoto ajoutée" : label,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontWeight: FontWeight.w700),
+        child: file != null
+            ? Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              file.path,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) {
+                return FutureBuilder<Uint8List>(
+                  future: file.readAsBytes(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData) {
+                      return Image.memory(
+                        snapshot.data!,
+                        fit: BoxFit.cover,
+                      );
+                    }
+                    return Container(
+                      color: Colors.white,
+                      alignment: Alignment.center,
+                      child: const CircularProgressIndicator(strokeWidth: 2),
+                    );
+                  },
+                );
+              },
+            ),
+            Positioned(
+              right: 6,
+              top: 6,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.55),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check,
+                  color: Colors.white,
+                  size: 16,
+                ),
+              ),
+            ),
+          ],
+        )
+            : Center(
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
       ),
     );
   }
 }
 
-/// ------------------------------------------------------------
-/// ✅ Texte juridique cliquable
-/// ------------------------------------------------------------
 class _LegalConsentText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -431,19 +480,22 @@ class _LegalConsentText extends StatelessWidget {
           TextSpan(
             text: "CGU",
             style: link,
-            recognizer: TapGestureRecognizer()..onTap = () => openUrl(LegalLinks.cgu),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => openUrl(LegalLinks.cgu),
           ),
           const TextSpan(text: ", la "),
           TextSpan(
             text: "Politique de confidentialité",
             style: link,
-            recognizer: TapGestureRecognizer()..onTap = () => openUrl(LegalLinks.privacy),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => openUrl(LegalLinks.privacy),
           ),
           const TextSpan(text: " et les "),
           TextSpan(
             text: "Mentions légales",
             style: link,
-            recognizer: TapGestureRecognizer()..onTap = () => openUrl(LegalLinks.legal),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => openUrl(LegalLinks.legal),
           ),
           const TextSpan(text: "."),
           const TextSpan(text: "\n\nSupport : "),
@@ -459,9 +511,6 @@ class _LegalConsentText extends StatelessWidget {
   }
 }
 
-/// ---------------------------------------------------------------------------
-/// Écran d’attente : détecte la confirmation automatiquement
-/// ---------------------------------------------------------------------------
 class EmailConfirmWaitScreen extends StatefulWidget {
   final SignupDraft draft;
   final Future<void> Function(String authedUserId) finalizeProfile;
@@ -507,7 +556,10 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
       _ticks++;
 
       if (_ticks > 80) {
-        setState(() => _status = "Toujours pas confirmé. Vérifie tes spams ou renvoie le mail.");
+        setState(() {
+          _status =
+          "Toujours pas confirmé. Vérifie tes spams ou renvoie le mail.";
+        });
         _busy = false;
         return;
       }

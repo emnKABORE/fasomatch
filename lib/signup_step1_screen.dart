@@ -1,15 +1,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'signup_draft.dart';
 import 'signup_step2_screen.dart';
 
 import 'ui/app_colors.dart';
 import 'ui/app_logo.dart';
-import 'ui/primary_button.dart';
 import 'ui/faso_input.dart';
+import 'ui/primary_button.dart';
 
 class SignupStep1Screen extends StatefulWidget {
   final SignupDraft draft;
@@ -28,8 +28,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
   late final TextEditingController emailCtrl;
   late final TextEditingController pwdCtrl;
   late final TextEditingController pwd2Ctrl;
+  late final TextEditingController phoneCtrl;
 
-  // téléphone (intl_phone_field gère le dial + drapeau)
   String _phoneComplete = ""; // ex: +22670123456
   String _phoneCountryISO = "BF"; // ex: BF
 
@@ -40,9 +40,9 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
   String? _errorMsg;
 
   final lookingForItems = const [
-    "❤️ Amour",
-    "🤝 Amitié",
-    "❤️🤝 Les deux",
+    {'value': 'amour', 'label': '❤️ Amour'},
+    {'value': 'amitie', 'label': '🤝 Amitié'},
+    {'value': 'les_deux', 'label': '❤️🤝 Les deux'},
   ];
 
   final genders = const ["Masculin", "Feminin"];
@@ -103,9 +103,21 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     emailCtrl = TextEditingController(text: d.email);
     pwdCtrl = TextEditingController(text: d.password);
     pwd2Ctrl = TextEditingController(text: "");
+    phoneCtrl = TextEditingController();
 
-    if (d.phone.isNotEmpty) _phoneComplete = d.phone;
-    if (d.country.isNotEmpty) _phoneCountryISO = d.country;
+    if (d.phone.isNotEmpty) {
+      _phoneComplete = d.phone;
+    }
+    if (d.country.isNotEmpty) {
+      _phoneCountryISO = d.country;
+    }
+
+    phoneCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
+
+    // Compatibilité avec les anciennes valeurs style "❤️ Amour"
+    d.lookingFor = _normalizeLookingForValue(d.lookingFor);
   }
 
   @override
@@ -115,18 +127,26 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     emailCtrl.dispose();
     pwdCtrl.dispose();
     pwd2Ctrl.dispose();
+    phoneCtrl.dispose();
     super.dispose();
   }
 
-  /// ✅ Redirect auto :
-  /// - Web (Chrome localhost): utilise l’origin courant (ex: http://localhost:58117)
-  /// - Mobile/prod: utilise ton domaine
+  String _normalizeLookingForValue(String raw) {
+    final v = raw.trim().toLowerCase();
+
+    if (v == 'amour' || v.contains('amour')) return 'amour';
+    if (v == 'amitie' || v.contains('amitié') || v.contains('amitie')) {
+      return 'amitie';
+    }
+    if (v == 'les_deux' || v.contains('les deux')) return 'les_deux';
+
+    return raw;
+  }
+
   String _emailRedirectTo() {
     if (kIsWeb) {
-      // ex: http://localhost:58117/auth/callback
       return "${Uri.base.origin}/auth/callback";
     }
-    // prod
     return "https://fasomatch.app/auth/callback";
   }
 
@@ -134,7 +154,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     hintText: hint,
     filled: true,
     fillColor: Colors.white.withOpacity(0.75),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    contentPadding:
+    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(10),
       borderSide: const BorderSide(color: Colors.black54, width: 1.2),
@@ -145,7 +166,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: AppColors.primaryBlue, width: 1.4),
+      borderSide:
+      const BorderSide(color: AppColors.primaryBlue, width: 1.4),
     ),
   );
 
@@ -181,13 +203,11 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     final d = widget.draft;
     d.firstName = firstNameCtrl.text.trim();
     d.lastName = lastNameCtrl.text.trim();
-
-    d.phone = _phoneComplete.trim(); // + indicatif + numéro
+    d.phone = _phoneComplete.trim();
     d.email = emailCtrl.text.trim();
     d.password = pwdCtrl.text;
-
-    // ISO du pays lié au téléphone (BF, FR, etc.)
     d.country = _phoneCountryISO;
+    d.lookingFor = _normalizeLookingForValue(d.lookingFor);
   }
 
   String _friendlyAuthError(String raw) {
@@ -201,7 +221,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     if (msg.contains('invalid') && msg.contains('email')) {
       return "Email invalide.";
     }
-    if (msg.contains('password') && (msg.contains('short') || msg.contains('6'))) {
+    if (msg.contains('password') &&
+        (msg.contains('short') || msg.contains('6'))) {
       return "Mot de passe trop court (min 6 caractères).";
     }
     if (msg.contains('failed to fetch') ||
@@ -209,8 +230,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
         msg.contains('socket')) {
       return "Problème de connexion internet. Réessaie.";
     }
-
-    // cas typique: redirect url not allowed / mail provider / etc.
     if (msg.contains('redirect') || msg.contains('url')) {
       return "Erreur de redirection email. Vérifie les Redirect URLs dans Supabase Auth.";
     }
@@ -246,7 +265,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
           "country_iso": d.country,
           "gender": d.gender,
           "city": d.city,
-          "looking_for": d.lookingFor,
+          "looking_for": d.lookingFor, // amour / amitie / les_deux
         },
       );
 
@@ -261,11 +280,11 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => SignupStep2Screen(draft: widget.draft, userId: userId),
+          builder: (_) =>
+              SignupStep2Screen(draft: widget.draft, userId: userId),
         ),
       );
     } on AuthException catch (e) {
-      // ✅ C’EST ÇA QU’IL FAUT LIRE (le vrai message)
       debugPrint("AUTH ERROR: status=${e.statusCode} message=${e.message}");
 
       if (!mounted) return;
@@ -289,7 +308,9 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     if (!_canGoNext) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("⚠️ Remplis tous les champs obligatoires pour continuer."),
+          content: Text(
+            "⚠️ Remplis tous les champs obligatoires pour continuer.",
+          ),
         ),
       );
       setState(() {});
@@ -335,7 +356,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         decoration: BoxDecoration(
                           color: Colors.red.withOpacity(0.08),
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                          border:
+                          Border.all(color: Colors.red.withOpacity(0.3)),
                         ),
                         child: Text(
                           _errorMsg!,
@@ -346,7 +368,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     const SizedBox(height: 12),
                   ],
 
-                  // ✅ PRÉNOM
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -360,13 +381,13 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         vertical: 14,
                       ),
                       onChanged: (_) => setState(() {}),
-                      validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? "Prénom obligatoire" : null,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? "Prénom obligatoire"
+                          : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ NOM
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -380,20 +401,23 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         vertical: 14,
                       ),
                       onChanged: (_) => setState(() {}),
-                      validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? "Nom obligatoire" : null,
+                      validator: (v) => (v == null || v.trim().isEmpty)
+                          ? "Nom obligatoire"
+                          : null,
                     ),
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ SEXE
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
                       value: d.gender.isEmpty ? null : d.gender,
                       decoration: deco("Sexe"),
                       items: genders
-                          .map((g) => DropdownMenuItem(value: g, child: Text(g)))
+                          .map((g) => DropdownMenuItem(
+                        value: g,
+                        child: Text(g),
+                      ))
                           .toList(),
                       onChanged: _loading
                           ? null
@@ -404,14 +428,16 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ VILLE
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
                       value: d.city.isEmpty ? null : d.city,
                       decoration: deco("Ville"),
                       items: citiesBF
-                          .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                          .map((c) => DropdownMenuItem(
+                        value: c,
+                        child: Text(c),
+                      ))
                           .toList(),
                       onChanged: _loading
                           ? null
@@ -422,24 +448,42 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ TÉLÉPHONE
                   SizedBox(
                     width: 360,
                     child: IntlPhoneField(
+                      controller: phoneCtrl,
                       enabled: !_loading,
                       initialCountryCode:
                       _phoneCountryISO.isEmpty ? "BF" : _phoneCountryISO,
-                      decoration:
-                      deco("70 12 34 56").copyWith(hintText: "70 12 34 56"),
+                      disableLengthCheck: true,
+                      style: TextStyle(
+                        color: Colors.black87,
+                        fontWeight: phoneCtrl.text.trim().isEmpty
+                            ? FontWeight.normal
+                            : FontWeight.w700,
+                      ),
+                      dropdownTextStyle: const TextStyle(
+                        color: Colors.black87,
+                        fontWeight: FontWeight.normal,
+                      ),
+                      decoration: deco("70 12 34 56").copyWith(
+                        hintText: "70 12 34 56",
+                        hintStyle: const TextStyle(
+                          color: Colors.black38,
+                          fontWeight: FontWeight.normal,
+                        ),
+                        counterText: "",
+                      ),
                       onChanged: (phone) {
                         setState(() {
-                          _phoneComplete = phone.completeNumber; // +22670123456
-                          _phoneCountryISO = phone.countryISOCode; // BF, FR...
+                          _phoneComplete = phone.completeNumber;
+                          _phoneCountryISO = phone.countryISOCode;
                         });
                       },
                       validator: (phone) {
                         final complete = phone?.completeNumber ?? _phoneComplete;
-                        final digits = complete.replaceAll(RegExp(r'[^0-9]'), '');
+                        final digits =
+                        complete.replaceAll(RegExp(r'[^0-9]'), '');
                         if (digits.length < 8) return "Téléphone invalide";
                         return null;
                       },
@@ -447,7 +491,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ EMAIL
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -472,7 +515,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ MOT DE PASSE
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -490,7 +532,9 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         onPressed: _loading
                             ? null
                             : () => setState(() => hidePwd = !hidePwd),
-                        icon: Icon(hidePwd ? Icons.visibility_off : Icons.visibility),
+                        icon: Icon(
+                          hidePwd ? Icons.visibility_off : Icons.visibility,
+                        ),
                       ),
                       onChanged: (_) => setState(() {}),
                       validator: (v) {
@@ -503,7 +547,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ CONFIRMATION MDP
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -521,11 +564,15 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         onPressed: _loading
                             ? null
                             : () => setState(() => hidePwd2 = !hidePwd2),
-                        icon: Icon(hidePwd2 ? Icons.visibility_off : Icons.visibility),
+                        icon: Icon(
+                          hidePwd2 ? Icons.visibility_off : Icons.visibility,
+                        ),
                       ),
                       onChanged: (_) => setState(() {}),
                       validator: (v) {
-                        if ((v ?? "").isEmpty) return "Confirmation obligatoire";
+                        if ((v ?? "").isEmpty) {
+                          return "Confirmation obligatoire";
+                        }
                         if (v != pwdCtrl.text) {
                           return "Les mots de passe ne correspondent pas";
                         }
@@ -535,23 +582,27 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ✅ JE RECHERCHE
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
                       value: d.lookingFor.isEmpty ? null : d.lookingFor,
                       decoration: deco("Je recherche"),
                       items: lookingForItems
-                          .map((x) => DropdownMenuItem(value: x, child: Text(x)))
+                          .map(
+                            (item) => DropdownMenuItem<String>(
+                          value: item['value']!,
+                          child: Text(item['label']!),
+                        ),
+                      )
                           .toList(),
                       onChanged: _loading
                           ? null
                           : (v) => setState(() => d.lookingFor = v ?? ""),
-                      validator: (v) =>
-                      (v == null || v.isEmpty) ? "Choix obligatoire" : null,
+                      validator: (v) => (v == null || v.isEmpty)
+                          ? "Choix obligatoire"
+                          : null,
                     ),
                   ),
-
                   const SizedBox(height: 18),
 
                   if (!_canGoNext) ...[

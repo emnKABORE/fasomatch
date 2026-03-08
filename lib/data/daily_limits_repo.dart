@@ -11,7 +11,7 @@ class LimitResult {
   final int used;
   final int limit;
 
-  /// optionnel: détails swipes si ton RPC renvoie aussi swipes_used/swipes_limit
+  /// optionnel: détails swipes si la RPC renvoie aussi swipes_used/swipes_limit
   final int? swipesUsed;
   final int? swipesLimit;
 
@@ -57,51 +57,56 @@ class DailyLimitsRepo {
     }
   }
 
-  /// ✅ ATOMIQUE : toute la logique est côté DB (RPC)
+  int _asInt(dynamic v) {
+    if (v == null) return 0;
+    if (v is int) return v;
+    if (v is double) return v.toInt();
+    return int.tryParse(v.toString()) ?? 0;
+  }
+
+  Map<String, dynamic> _asMap(dynamic payload) {
+    if (payload is Map<String, dynamic>) return payload;
+    if (payload is Map) return Map<String, dynamic>.from(payload);
+    throw Exception("RPC payload not a map: $payload");
+  }
+
+  /// ✅ ATOMIQUE (1 action) : toute la logique est côté DB
   /// plan attendu: 'free' | 'premium' | 'ultra'
+  ///
+  /// IMPORTANT: d'après tes RPC, la fonction s'appelle `consume_action`
+  /// et les params sont: p_uid, p_plan, p_action
   Future<LimitResult> consumeAction({
     required String userId,
     required String plan,
     required LimitAction action,
   }) async {
     final payload = await _supabase.rpc(
-      'consume_actions',
+      'consume_action',
       params: {
-        'p_user_id': userId,
+        'p_uid': userId,
         'p_plan': plan,
         'p_action': _actionToRpc(action),
       },
     );
 
-    // payload attendu (exemples):
-    // { ok: true, action: "swipe", used: 3, limit: 20 }
-    // { ok: false, action: "superlike", used: 1, limit: 1, error: "limit_reached", swipes_used: 19, swipes_limit: 20 }
-
-    final m = Map<String, dynamic>.from(payload as Map);
+    final m = _asMap(payload);
 
     final ok = (m['ok'] == true);
     final act = _actionFromRpc((m['action'] ?? _actionToRpc(action)).toString());
 
-    // selon ton RPC, le champ peut s'appeler "used" ou "superlikes_used" etc.
-    // on gère les deux cas :
-    int used = 0;
-    int limit = 0;
+    // champs possibles selon ton SQL: used/limit ou swipes_used/... etc.
+    int used = _asInt(m['used']);
+    int limit = _asInt(m['limit']);
 
-    if (m.containsKey('used')) used = (m['used'] ?? 0) as int;
-    if (m.containsKey('limit')) limit = (m['limit'] ?? 0) as int;
-
-    // fallback si ton RPC renvoie "superlikes_used"/"superlikes_limit" etc.
-    if (act == LimitAction.superlike) {
-      used = (m['used'] ?? m['superlikes_used'] ?? 0) as int;
-      limit = (m['limit'] ?? m['superlikes_limit'] ?? 0) as int;
-    }
     if (act == LimitAction.swipe) {
-      used = (m['used'] ?? m['swipes_used'] ?? 0) as int;
-      limit = (m['limit'] ?? m['swipes_limit'] ?? 0) as int;
-    }
-    if (act == LimitAction.rewind) {
-      used = (m['used'] ?? m['rewind_used'] ?? 0) as int;
-      limit = (m['limit'] ?? m['rewind_limit'] ?? 0) as int;
+      used = _asInt(m['used'] ?? m['swipes_used']);
+      limit = _asInt(m['limit'] ?? m['swipes_limit']);
+    } else if (act == LimitAction.superlike) {
+      used = _asInt(m['used'] ?? m['superlikes_used']);
+      limit = _asInt(m['limit'] ?? m['superlikes_limit']);
+    } else if (act == LimitAction.rewind) {
+      used = _asInt(m['used'] ?? m['rewind_used']);
+      limit = _asInt(m['limit'] ?? m['rewind_limit']);
     }
 
     return LimitResult(
@@ -109,8 +114,42 @@ class DailyLimitsRepo {
       action: act,
       used: used,
       limit: limit,
-      swipesUsed: (m['swipes_used'] as int?),
-      swipesLimit: (m['swipes_limit'] as int?),
+      swipesUsed: m.containsKey('swipes_used') ? _asInt(m['swipes_used']) : null,
+      swipesLimit: m.containsKey('swipes_limit') ? _asInt(m['swipes_limit']) : null,
+      error: m['error']?.toString(),
+    );
+  }
+
+  /// ✅ ATOMIQUE (SuperLike + Swipe ensemble) :
+  /// utilise ta RPC `consume_superlike_and_swipe(p_uid uuid, p_plan text)`
+  Future<LimitResult> consumeSuperlikeAndSwipe({
+    required String userId,
+    required String plan,
+  }) async {
+    final payload = await _supabase.rpc(
+      'consume_superlike_and_swipe',
+      params: {
+        'p_uid': userId,
+        'p_plan': plan,
+      },
+    );
+
+    final m = _asMap(payload);
+
+    final ok = (m['ok'] == true);
+
+    // cette RPC peut renvoyer action="superlike" ou "superlike_and_swipe"
+    // on force l'action côté app = superlike (car c'est le bouton)
+    int used = _asInt(m['used'] ?? m['superlikes_used']);
+    int limit = _asInt(m['limit'] ?? m['superlikes_limit']);
+
+    return LimitResult(
+      ok: ok,
+      action: LimitAction.superlike,
+      used: used,
+      limit: limit,
+      swipesUsed: m.containsKey('swipes_used') ? _asInt(m['swipes_used']) : null,
+      swipesLimit: m.containsKey('swipes_limit') ? _asInt(m['swipes_limit']) : null,
       error: m['error']?.toString(),
     );
   }
