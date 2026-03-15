@@ -1,10 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter/foundation.dart';
 
-import '../services/security_service.dart';
-import 'matches_screen.dart';
+import '../moderation/user_moderation_sheet.dart';
+import 'conversation_preview.dart';
 
 class ChatScreen extends StatefulWidget {
   final ConversationPreview conversation;
@@ -20,7 +20,6 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final supabase = Supabase.instance.client;
-  final security = SecurityService();
 
   final TextEditingController _messageCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
@@ -30,11 +29,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _sending = false;
   bool _hideSensitiveContent = false;
 
-  RealtimeChannel? _channel;
+  bool _isOtherOnline = false;
+  DateTime? _otherLastSeenAt;
+
+  RealtimeChannel? _messageChannel;
+  RealtimeChannel? _profileChannel;
 
   String? _matchId;
   String? _myUserId;
   String? _otherUserId;
+
+  bool _chatBlocked = false;
+  String _blockedReason =
+      "Cette conversation n’est plus disponible pour le moment.";
 
   @override
   void initState() {
@@ -62,6 +69,120 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  String _normalizePhone(String? raw) {
+    if (raw == null) return '';
+    return raw.replaceAll(RegExp(r'[^0-9]'), '');
+  }
+
+  bool _profileVisible(Map<String, dynamic> row) {
+    final isActive = (row['is_active'] as bool?) ?? true;
+    final status = (row['account_status'] ?? '').toString().toLowerCase();
+
+    if (!isActive) return false;
+    if (status == 'inactive' ||
+        status == 'disabled' ||
+        status == 'deactivated' ||
+        status == 'hidden') {
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<bool> _isBlockedOrUnavailable() async {
+    final me = _myUserId;
+    final other = _otherUserId;
+    if (me == null || other == null) return true;
+
+    try {
+      final myProfileRaw = await supabase
+          .from('profiles')
+          .select('id, phone, is_active, account_status')
+          .eq('id', me)
+          .maybeSingle();
+
+      final otherProfileRaw = await supabase
+          .from('profiles')
+          .select('id, phone, is_active, account_status')
+          .eq('id', other)
+          .maybeSingle();
+
+      if (myProfileRaw == null || otherProfileRaw == null) {
+        _blockedReason = "Ce profil n’est plus disponible.";
+        return true;
+      }
+
+      final myProfile = Map<String, dynamic>.from(myProfileRaw as Map);
+      final otherProfile = Map<String, dynamic>.from(otherProfileRaw as Map);
+
+      if (!_profileVisible(otherProfile)) {
+        _blockedReason = "Ce profil a été masqué ou désactivé.";
+        return true;
+      }
+
+      final classicBlockedByMe = await supabase
+          .from('user_blocks')
+          .select('id')
+          .eq('blocker_id', me)
+          .eq('blocked_id', other)
+          .limit(1);
+
+      if ((classicBlockedByMe as List).isNotEmpty) {
+        _blockedReason = "Tu as bloqué cet utilisateur.";
+        return true;
+      }
+
+      final classicBlockedMe = await supabase
+          .from('user_blocks')
+          .select('id')
+          .eq('blocker_id', other)
+          .eq('blocked_id', me)
+          .limit(1);
+
+      if ((classicBlockedMe as List).isNotEmpty) {
+        _blockedReason = "Cet utilisateur n’est plus disponible.";
+        return true;
+      }
+
+      final myPhone = _normalizePhone(myProfile['phone']?.toString());
+      final otherPhone = _normalizePhone(otherProfile['phone']?.toString());
+
+      if (otherPhone.isNotEmpty) {
+        final discreetByMe = await supabase
+            .from('discreet_blocks')
+            .select('id')
+            .eq('owner_user_id', me)
+            .eq('blocked_phone_e164', otherPhone)
+            .limit(1);
+
+        if ((discreetByMe as List).isNotEmpty) {
+          _blockedReason = "Tu as masqué ce contact.";
+          return true;
+        }
+      }
+
+      if (myPhone.isNotEmpty) {
+        final discreetMe = await supabase
+            .from('discreet_blocks')
+            .select('id')
+            .eq('owner_user_id', other)
+            .eq('blocked_phone_e164', myPhone)
+            .limit(1);
+
+        if ((discreetMe as List).isNotEmpty) {
+          _blockedReason = "Cet utilisateur n’est plus disponible.";
+          return true;
+        }
+      }
+
+      return false;
+    } catch (e) {
+      debugPrint('_isBlockedOrUnavailable error: $e');
+      _blockedReason = "Impossible de vérifier l’accès à ce chat.";
+      return true;
+    }
+  }
+
   Future<void> _initChat() async {
     try {
       _myUserId = supabase.auth.currentUser?.id;
@@ -73,8 +194,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return;
       }
 
+      final blocked = await _isBlockedOrUnavailable();
+      if (blocked) {
+        if (!mounted) return;
+        setState(() {
+          _chatBlocked = true;
+          _loading = false;
+        });
+        return;
+      }
+
       await _loadMessages();
+      await _loadOtherUserPresence();
       _subscribeMessages();
+      _subscribePresence();
       await _markMessagesAsRead();
     } catch (e) {
       _snack("Erreur chargement chat : $e");
@@ -98,10 +231,29 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _scrollToBottom(jump: true);
   }
 
+  Future<void> _loadOtherUserPresence() async {
+    if (_otherUserId == null) return;
+
+    final row = await supabase
+        .from('profiles')
+        .select('is_online, last_seen_at')
+        .eq('id', _otherUserId!)
+        .maybeSingle();
+
+    if (row == null || !mounted) return;
+
+    setState(() {
+      _isOtherOnline = (row['is_online'] as bool?) ?? false;
+      _otherLastSeenAt = row['last_seen_at'] != null
+          ? DateTime.tryParse(row['last_seen_at'].toString())
+          : null;
+    });
+  }
+
   void _subscribeMessages() {
     if (_matchId == null) return;
 
-    _channel = supabase
+    _messageChannel = supabase
         .channel('chat-$_matchId')
         .onPostgresChanges(
       event: PostgresChangeEvent.insert,
@@ -132,8 +284,45 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         .subscribe();
   }
 
+  void _subscribePresence() {
+    if (_otherUserId == null) return;
+
+    _profileChannel = supabase
+        .channel('profile-presence-$_otherUserId')
+        .onPostgresChanges(
+      event: PostgresChangeEvent.update,
+      schema: 'public',
+      table: 'profiles',
+      filter: PostgresChangeFilter(
+        type: PostgresChangeFilterType.eq,
+        column: 'id',
+        value: _otherUserId!,
+      ),
+      callback: (payload) async {
+        final row = Map<String, dynamic>.from(payload.newRecord);
+        if (!mounted) return;
+
+        setState(() {
+          _isOtherOnline = (row['is_online'] as bool?) ?? false;
+          _otherLastSeenAt = row['last_seen_at'] != null
+              ? DateTime.tryParse(row['last_seen_at'].toString())
+              : null;
+        });
+
+        final blocked = await _isBlockedOrUnavailable();
+        if (!mounted) return;
+        if (blocked) {
+          setState(() {
+            _chatBlocked = true;
+          });
+        }
+      },
+    )
+        .subscribe();
+  }
+
   Future<void> _markMessagesAsRead() async {
-    if (_matchId == null || _myUserId == null) return;
+    if (_matchId == null || _myUserId == null || _chatBlocked) return;
 
     try {
       await supabase
@@ -148,6 +337,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _sendMessage() async {
     final text = _messageCtrl.text.trim();
     if (text.isEmpty || _matchId == null || _myUserId == null) return;
+    if (_chatBlocked) {
+      _snack(_blockedReason);
+      return;
+    }
+
+    final blockedNow = await _isBlockedOrUnavailable();
+    if (blockedNow) {
+      if (!mounted) return;
+      setState(() => _chatBlocked = true);
+      _snack(_blockedReason);
+      return;
+    }
 
     try {
       setState(() => _sending = true);
@@ -172,173 +373,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _showUserActions() {
+  Future<void> _openModerationSheet() async {
     if (_otherUserId == null) return;
 
-    showModalBottomSheet(
+    await showUserModerationSheet(
       context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) {
-        return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFFFDFDFD),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          child: SafeArea(
-            child: Wrap(
-              children: [
-                const SizedBox(height: 10),
-                Center(
-                  child: Container(
-                    width: 46,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: Colors.black12,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ListTile(
-                  leading: const Icon(Icons.block),
-                  title: const Text(
-                    'Bloquer cet utilisateur',
-                    style: TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await security.blockUser(_otherUserId!);
-                    if (!mounted) return;
-                    _snack("Utilisateur bloqué");
-                    Navigator.pop(context);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.flag_outlined),
-                  title: const Text(
-                    'Signaler cet utilisateur',
-                    style: TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await _showReportDialog();
-                  },
-                ),
-                const SizedBox(height: 8),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _showReportDialog() async {
-    if (_otherUserId == null) return;
-
-    String selectedReason = 'arnaque';
-    final detailsCtrl = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(22),
-              ),
-              title: const Text(
-                "Signaler cet utilisateur",
-                style: TextStyle(fontWeight: FontWeight.w900),
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    value: selectedReason,
-                    decoration: InputDecoration(
-                      labelText: "Motif",
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'faux_profil',
-                        child: Text('Faux profil'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'arnaque',
-                        child: Text('Arnaque'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'harcelement',
-                        child: Text('Harcèlement'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'contenu_inapproprie',
-                        child: Text('Contenu inapproprié'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'demande_argent',
-                        child: Text('Demande d’argent'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'autre',
-                        child: Text('Autre'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        setModalState(() => selectedReason = value);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: detailsCtrl,
-                    maxLines: 3,
-                    decoration: InputDecoration(
-                      labelText: "Détails (optionnel)",
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text("Annuler"),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF111111),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text("Envoyer"),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    ) ??
-        false;
-
-    if (!confirmed) return;
-
-    await security.reportUser(
       reportedUserId: _otherUserId!,
-      reason: selectedReason,
-      details: detailsCtrl.text.trim().isEmpty ? null : detailsCtrl.text.trim(),
+      displayedName: widget.conversation.name,
     );
 
     if (!mounted) return;
-    _snack("Signalement envoyé");
+
+    final blocked = await _isBlockedOrUnavailable();
+    if (blocked) {
+      Navigator.pop(context, true);
+      return;
+    }
+
+    setState(() {});
   }
 
   void _scrollToBottom({bool jump = false}) {
@@ -379,6 +431,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  String _presenceLabel() {
+    if (_chatBlocked) return 'Indisponible';
+    if (_isOtherOnline) return 'En ligne';
+    if (_otherLastSeenAt == null) return 'Hors ligne';
+
+    final dt = _otherLastSeenAt!.toLocal();
+    return 'Vu à ${DateFormat('HH:mm').format(dt)}';
+  }
+
   Widget _buildAvatar() {
     final avatar = widget.conversation.avatarUrl;
 
@@ -402,8 +463,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _messageCtrl.dispose();
     _scrollCtrl.dispose();
 
-    if (_channel != null) {
-      supabase.removeChannel(_channel!);
+    if (_messageChannel != null) {
+      supabase.removeChannel(_messageChannel!);
+    }
+    if (_profileChannel != null) {
+      supabase.removeChannel(_profileChannel!);
     }
 
     WidgetsBinding.instance.removeObserver(this);
@@ -422,12 +486,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         backgroundColor: bg,
         elevation: 0,
         centerTitle: true,
-        toolbarHeight: 110,
+        toolbarHeight: 116,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context, _chatBlocked),
         ),
         title: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Image.asset(
               'assets/images/fasomatch_logo.png',
@@ -439,17 +504,57 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _buildAvatar(),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    _buildAvatar(),
+                    Positioned(
+                      right: -1,
+                      bottom: -1,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: _chatBlocked
+                              ? Colors.grey.shade400
+                              : _isOtherOnline
+                              ? const Color(0xFF22C55E)
+                              : Colors.grey.shade400,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(width: 8),
                 Flexible(
-                  child: Text(
-                    widget.conversation.name,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18,
-                      color: Colors.black87,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.conversation.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      Text(
+                        _presenceLabel(),
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          color: _chatBlocked
+                              ? Colors.black45
+                              : _isOtherOnline
+                              ? const Color(0xFF22C55E)
+                              : Colors.black45,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -459,7 +564,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         actions: [
           IconButton(
             icon: const Icon(Icons.more_vert, color: Colors.black87),
-            onPressed: _showUserActions,
+            onPressed: _openModerationSheet,
           ),
         ],
       ),
@@ -469,12 +574,34 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ? const Center(child: CircularProgressIndicator())
               : Column(
             children: [
+              if (_chatBlocked)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: Colors.orange.withOpacity(0.28),
+                    ),
+                  ),
+                  child: Text(
+                    _blockedReason,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
               Expanded(
                 child: _messages.isEmpty
-                    ? const Center(
+                    ? Center(
                   child: Text(
-                    "Commencez la conversation ✨",
-                    style: TextStyle(
+                    _chatBlocked
+                        ? "Conversation indisponible"
+                        : "Commencez la conversation ✨",
+                    style: const TextStyle(
                       fontWeight: FontWeight.w700,
                       color: Colors.black54,
                     ),
@@ -482,14 +609,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 )
                     : ListView.builder(
                   controller: _scrollCtrl,
-                  padding:
-                  const EdgeInsets.fromLTRB(14, 8, 14, 18),
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
                   itemCount: _messages.length,
                   itemBuilder: (context, index) {
                     final msg = _messages[index];
                     final isMe = msg['author_id'] == _myUserId;
-                    final content =
-                    (msg['content'] ?? '').toString();
+                    final content = (msg['content'] ?? '').toString();
                     final time = _formatTime(msg['created_at']);
 
                     return Align(
@@ -529,8 +654,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ],
                         ),
                         child: Column(
-                          crossAxisAlignment:
-                          CrossAxisAlignment.end,
+                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Text(
                               content,
@@ -583,12 +707,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             controller: _messageCtrl,
                             minLines: 1,
                             maxLines: 5,
+                            enabled: !_chatBlocked,
                             textCapitalization:
                             TextCapitalization.sentences,
-                            decoration: const InputDecoration(
-                              hintText: "Écrire un message...",
+                            decoration: InputDecoration(
+                              hintText: _chatBlocked
+                                  ? "Conversation indisponible"
+                                  : "Écrire un message...",
                               border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(
+                              contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 14,
                                 vertical: 12,
                               ),
@@ -599,13 +726,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ),
                       const SizedBox(width: 10),
                       InkWell(
-                        onTap: _sending ? null : _sendMessage,
+                        onTap:
+                        (_sending || _chatBlocked) ? null : _sendMessage,
                         borderRadius: BorderRadius.circular(18),
                         child: Container(
                           width: 52,
                           height: 52,
                           decoration: BoxDecoration(
-                            color: bubbleMe,
+                            color: _chatBlocked
+                                ? Colors.grey.shade400
+                                : bubbleMe,
                             borderRadius: BorderRadius.circular(18),
                           ),
                           child: _sending

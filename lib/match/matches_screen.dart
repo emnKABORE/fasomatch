@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../moderation/user_moderation_sheet.dart';
 import 'chat_screen.dart';
+import 'conversation_preview.dart';
 
 class MatchesScreen extends StatefulWidget {
   const MatchesScreen({super.key});
@@ -23,6 +25,26 @@ class _MatchesScreenState extends State<MatchesScreen> {
     _loadConversations();
   }
 
+  String _normalizePhone(String? raw) {
+    if (raw == null) return '';
+    return raw.replaceAll(RegExp(r'[^0-9]'), '');
+  }
+
+  bool _profileVisible(Map<String, dynamic> row) {
+    final isActive = (row['is_active'] as bool?) ?? true;
+    final status = (row['account_status'] ?? '').toString().toLowerCase();
+
+    if (!isActive) return false;
+    if (status == 'inactive' ||
+        status == 'disabled' ||
+        status == 'deactivated' ||
+        status == 'hidden') {
+      return false;
+    }
+
+    return true;
+  }
+
   String? _extractPhoto(Map<String, dynamic> profile) {
     final avatarUrl = profile['avatar_url'];
     if (avatarUrl is String && avatarUrl.trim().isNotEmpty) {
@@ -40,6 +62,77 @@ class _MatchesScreenState extends State<MatchesScreen> {
     return null;
   }
 
+  Future<Set<String>> _loadBlockedUserIds(String myUserId) async {
+    final result = <String>{};
+
+    try {
+      final byMe = await supabase
+          .from('user_blocks')
+          .select('blocked_id')
+          .eq('blocker_id', myUserId);
+
+      for (final item in (byMe as List)) {
+        final row = Map<String, dynamic>.from(item as Map);
+        final id = row['blocked_id']?.toString().trim();
+        if (id != null && id.isNotEmpty) result.add(id);
+      }
+
+      final blockingMe = await supabase
+          .from('user_blocks')
+          .select('blocker_id')
+          .eq('blocked_id', myUserId);
+
+      for (final item in (blockingMe as List)) {
+        final row = Map<String, dynamic>.from(item as Map);
+        final id = row['blocker_id']?.toString().trim();
+        if (id != null && id.isNotEmpty) result.add(id);
+      }
+    } catch (e) {
+      debugPrint('_loadBlockedUserIds error: $e');
+    }
+
+    return result;
+  }
+
+  Future<Set<String>> _loadBlockedPhones({
+    required String myUserId,
+    required String myPhone,
+  }) async {
+    final result = <String>{};
+
+    try {
+      final myDiscreet = await supabase
+          .from('discreet_blocks')
+          .select('blocked_phone_e164')
+          .eq('owner_user_id', myUserId);
+
+      for (final item in (myDiscreet as List)) {
+        final row = Map<String, dynamic>.from(item as Map);
+        final phone = _normalizePhone(row['blocked_phone_e164']?.toString());
+        if (phone.isNotEmpty) result.add(phone);
+      }
+
+      if (myPhone.isNotEmpty) {
+        final blockingMyPhone = await supabase
+            .from('discreet_blocks')
+            .select('owner_user_id')
+            .eq('blocked_phone_e164', myPhone);
+
+        for (final item in (blockingMyPhone as List)) {
+          final row = Map<String, dynamic>.from(item as Map);
+          final ownerId = row['owner_user_id']?.toString().trim();
+          if (ownerId != null && ownerId.isNotEmpty) {
+            result.add('__OWNER__$ownerId');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('_loadBlockedPhones error: $e');
+    }
+
+    return result;
+  }
+
   Future<void> _loadConversations() async {
     try {
       final currentUser = supabase.auth.currentUser;
@@ -51,6 +144,22 @@ class _MatchesScreenState extends State<MatchesScreen> {
         });
         return;
       }
+
+      final myProfileRaw = await supabase
+          .from('profiles')
+          .select('phone')
+          .eq('id', currentUser.id)
+          .maybeSingle();
+
+      final myPhone = _normalizePhone(
+        myProfileRaw == null ? null : myProfileRaw['phone']?.toString(),
+      );
+
+      final blockedIds = await _loadBlockedUserIds(currentUser.id);
+      final blockedPhonesMeta = await _loadBlockedPhones(
+        myUserId: currentUser.id,
+        myPhone: myPhone,
+      );
 
       final rows = await supabase
           .from('matches')
@@ -66,15 +175,34 @@ class _MatchesScreenState extends State<MatchesScreen> {
           final user2 = row['user2'] as String;
           final otherUserId = user1 == currentUser.id ? user2 : user1;
 
+          if (blockedIds.contains(otherUserId)) {
+            return null;
+          }
+
+          if (blockedPhonesMeta.contains('__OWNER__$otherUserId')) {
+            return null;
+          }
+
           final profileRaw = await supabase
               .from('profiles')
-              .select('id, first_name, avatar_url, photos')
+              .select(
+            'id, first_name, avatar_url, photos, is_online, last_seen_at, is_active, account_status, phone',
+          )
               .eq('id', otherUserId)
               .maybeSingle();
 
-          final profile = profileRaw == null
-              ? <String, dynamic>{}
-              : Map<String, dynamic>.from(profileRaw as Map);
+          if (profileRaw == null) return null;
+
+          final profile = Map<String, dynamic>.from(profileRaw as Map);
+
+          if (!_profileVisible(profile)) {
+            return null;
+          }
+
+          final otherPhone = _normalizePhone(profile['phone']?.toString());
+          if (otherPhone.isNotEmpty && blockedPhonesMeta.contains(otherPhone)) {
+            return null;
+          }
 
           final lastMessageRaw = await supabase
               .from('messages')
@@ -93,6 +221,11 @@ class _MatchesScreenState extends State<MatchesScreen> {
 
           final unreadCount = (unreadRows as List).length;
 
+          final isOnline = (profile['is_online'] as bool?) ?? false;
+          final lastSeenAt = profile['last_seen_at'] != null
+              ? DateTime.tryParse(profile['last_seen_at'].toString())
+              : null;
+
           if (lastMessageRaw == null) {
             final date = row['last_message_at'] != null
                 ? DateTime.parse(row['last_message_at'] as String)
@@ -103,7 +236,8 @@ class _MatchesScreenState extends State<MatchesScreen> {
               otherUserId: otherUserId,
               name: (profile['first_name'] ?? 'Match').toString(),
               avatarUrl: _extractPhoto(profile),
-              isOnline: false,
+              isOnline: isOnline,
+              lastSeenAt: lastSeenAt,
               lastMessageText: 'Commence la conversation ✨',
               lastMessageAt: date,
               lastMessageFromMe: false,
@@ -120,7 +254,8 @@ class _MatchesScreenState extends State<MatchesScreen> {
             otherUserId: otherUserId,
             name: (profile['first_name'] ?? 'Match').toString(),
             avatarUrl: _extractPhoto(profile),
-            isOnline: false,
+            isOnline: isOnline,
+            lastSeenAt: lastSeenAt,
             lastMessageText: (lastMessage['content'] ?? '').toString(),
             lastMessageAt: DateTime.parse(lastMessage['created_at'] as String),
             lastMessageFromMe: lastMessageFromMe,
@@ -137,7 +272,8 @@ class _MatchesScreenState extends State<MatchesScreen> {
 
       if (!mounted) return;
       setState(() {
-        _conversations = parsed;
+        _conversations =
+            parsed.whereType<ConversationPreview>().toList(growable: false);
         _loading = false;
       });
     } catch (e) {
@@ -246,6 +382,17 @@ class _MatchesScreenState extends State<MatchesScreen> {
     );
   }
 
+  Future<void> _openModerationSheet(ConversationPreview convo) async {
+    await showUserModerationSheet(
+      context: context,
+      reportedUserId: convo.otherUserId,
+      displayedName: convo.name,
+    );
+
+    if (!mounted) return;
+    await _loadConversations();
+  }
+
   Widget _buildBody() {
     if (_loading) {
       return const Center(
@@ -320,14 +467,18 @@ class _MatchesScreenState extends State<MatchesScreen> {
             child: _ConversationTile(
               convo: c,
               onTap: () async {
-                await Navigator.push(
+                final result = await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => ChatScreen(conversation: c),
                   ),
                 );
-                _loadConversations();
+                await _loadConversations();
+                if (result == true) {
+                  await _loadConversations();
+                }
               },
+              onMoreTap: () => _openModerationSheet(c),
             ),
           );
         },
@@ -348,11 +499,19 @@ class _MatchesScreenState extends State<MatchesScreen> {
 class _ConversationTile extends StatelessWidget {
   final ConversationPreview convo;
   final VoidCallback onTap;
+  final VoidCallback onMoreTap;
 
   const _ConversationTile({
     required this.convo,
     required this.onTap,
+    required this.onMoreTap,
   });
+
+  String _statusLabel() {
+    if (convo.isOnline) return 'En ligne';
+    if (convo.lastSeenAt == null) return 'Hors ligne';
+    return 'Hors ligne';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -414,6 +573,17 @@ class _ConversationTile extends StatelessWidget {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _statusLabel(),
+                    style: TextStyle(
+                      color: convo.isOnline
+                          ? const Color(0xFF22C55E)
+                          : Colors.black45,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
                   const SizedBox(height: 6),
                   Row(
                     children: [
@@ -463,10 +633,13 @@ class _ConversationTile extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 10),
-            Icon(
-              Icons.chevron_right_rounded,
-              color: Colors.black.withOpacity(0.25),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: Icon(
+                Icons.more_horiz,
+                color: Colors.black.withOpacity(0.45),
+              ),
+              onPressed: onMoreTap,
             ),
           ],
         ),
@@ -603,45 +776,5 @@ class _ReadReceiptMini extends StatelessWidget {
         fontSize: 12,
       ),
     );
-  }
-}
-
-enum ReadStatus {
-  none,
-  sent,
-  delivered,
-  read,
-}
-
-class ConversationPreview {
-  final String id;
-  final String otherUserId;
-  final String name;
-  final String? avatarUrl;
-  final bool isOnline;
-  final String lastMessageText;
-  final DateTime lastMessageAt;
-  final bool lastMessageFromMe;
-  final ReadStatus lastMessageReadStatus;
-  final int unreadCount;
-
-  const ConversationPreview({
-    required this.id,
-    required this.otherUserId,
-    required this.name,
-    required this.avatarUrl,
-    required this.isOnline,
-    required this.lastMessageText,
-    required this.lastMessageAt,
-    required this.lastMessageFromMe,
-    required this.lastMessageReadStatus,
-    required this.unreadCount,
-  });
-
-  bool get isToday {
-    final now = DateTime.now();
-    return now.year == lastMessageAt.year &&
-        now.month == lastMessageAt.month &&
-        now.day == lastMessageAt.day;
   }
 }

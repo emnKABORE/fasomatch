@@ -14,7 +14,10 @@ import 'ui/primary_button.dart';
 class SignupStep1Screen extends StatefulWidget {
   final SignupDraft draft;
 
-  const SignupStep1Screen({super.key, required this.draft});
+  const SignupStep1Screen({
+    super.key,
+    required this.draft,
+  });
 
   @override
   State<SignupStep1Screen> createState() => _SignupStep1ScreenState();
@@ -30,8 +33,8 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
   late final TextEditingController pwd2Ctrl;
   late final TextEditingController phoneCtrl;
 
-  String _phoneComplete = ""; // ex: +22670123456
-  String _phoneCountryISO = "BF"; // ex: BF
+  String _phoneComplete = "";
+  String _phoneCountryISO = "BF";
 
   bool hidePwd = true;
   bool hidePwd2 = true;
@@ -102,7 +105,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     lastNameCtrl = TextEditingController(text: d.lastName);
     emailCtrl = TextEditingController(text: d.email);
     pwdCtrl = TextEditingController(text: d.password);
-    pwd2Ctrl = TextEditingController(text: "");
+    pwd2Ctrl = TextEditingController(text: d.password);
     phoneCtrl = TextEditingController();
 
     if (d.phone.isNotEmpty) {
@@ -116,7 +119,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       if (mounted) setState(() {});
     });
 
-    // Compatibilité avec les anciennes valeurs style "❤️ Amour"
     d.lookingFor = _normalizeLookingForValue(d.lookingFor);
   }
 
@@ -147,11 +149,16 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
     if (kIsWeb) {
       return "${Uri.base.origin}/auth/callback";
     }
-    return "https://fasomatch.app/auth/callback";
+    return "fasomatch://auth/callback";
   }
 
   InputDecoration deco(String hint) => InputDecoration(
     hintText: hint,
+    hintStyle: const TextStyle(
+      color: Colors.black38,
+      fontWeight: FontWeight.normal,
+      fontSize: 16,
+    ),
     filled: true,
     fillColor: Colors.white.withOpacity(0.75),
     contentPadding:
@@ -169,6 +176,12 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       borderSide:
       const BorderSide(color: AppColors.primaryBlue, width: 1.4),
     ),
+  );
+
+  TextStyle get _dropdownTextStyle => const TextStyle(
+    color: Colors.black87,
+    fontWeight: FontWeight.w700,
+    fontSize: 16,
   );
 
   bool get _canGoNext {
@@ -230,9 +243,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
         msg.contains('socket')) {
       return "Problème de connexion internet. Réessaie.";
     }
-    if (msg.contains('redirect') || msg.contains('url')) {
-      return "Erreur de redirection email. Vérifie les Redirect URLs dans Supabase Auth.";
-    }
 
     return "Erreur: $raw";
   }
@@ -247,12 +257,10 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
       _saveDraftFromControllers();
       final d = widget.draft;
 
-      final email = emailCtrl.text.trim();
-      final password = pwdCtrl.text;
       final supabase = Supabase.instance.client;
-
+      final email = d.email.trim();
+      final password = d.password;
       final redirectTo = _emailRedirectTo();
-      debugPrint("SIGNUP redirectTo=$redirectTo email=$email");
 
       final response = await supabase.auth.signUp(
         email: email,
@@ -265,32 +273,30 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
           "country_iso": d.country,
           "gender": d.gender,
           "city": d.city,
-          "looking_for": d.lookingFor, // amour / amitie / les_deux
+          "looking_for": d.lookingFor,
         },
       );
 
-      debugPrint(
-        "SIGNUP OK user=${response.user?.id} session=${response.session != null} confirmedAt=${response.user?.emailConfirmedAt}",
-      );
-
-      final userId = response.user?.id;
+      final user = response.user;
+      if (user == null) {
+        throw Exception("Impossible de créer le compte.");
+      }
 
       if (!mounted) return;
 
-      Navigator.push(
+      Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) =>
-              SignupStep2Screen(draft: widget.draft, userId: userId),
+          builder: (_) => SignupStep2Screen(
+            draft: widget.draft,
+            userId: user.id,
+          ),
         ),
       );
     } on AuthException catch (e) {
-      debugPrint("AUTH ERROR: status=${e.statusCode} message=${e.message}");
-
       if (!mounted) return;
       setState(() => _errorMsg = _friendlyAuthError(e.message));
     } catch (e) {
-      debugPrint("UNKNOWN ERROR: $e");
       if (!mounted) return;
       setState(() => _errorMsg = _friendlyAuthError(e.toString()));
     } finally {
@@ -331,7 +337,7 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
         elevation: 0,
         toolbarHeight: 86,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.black87),
+          icon: const Icon(Icons.arrow_back, color: Colors.black87, size: 28),
           onPressed: _loading ? null : () => Navigator.pop(context),
         ),
         centerTitle: true,
@@ -367,7 +373,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                     const SizedBox(height: 12),
                   ],
-
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -380,6 +385,13 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         horizontal: 14,
                         vertical: 14,
                       ),
+                      textStyle: TextStyle(
+                        color: Colors.black87,
+                        fontWeight: firstNameCtrl.text.trim().isEmpty
+                            ? FontWeight.normal
+                            : FontWeight.w700,
+                        fontSize: 16,
+                      ),
                       onChanged: (_) => setState(() {}),
                       validator: (v) => (v == null || v.trim().isEmpty)
                           ? "Prénom obligatoire"
@@ -387,7 +399,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -400,6 +411,13 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         horizontal: 14,
                         vertical: 14,
                       ),
+                      textStyle: TextStyle(
+                        color: Colors.black87,
+                        fontWeight: lastNameCtrl.text.trim().isEmpty
+                            ? FontWeight.normal
+                            : FontWeight.w700,
+                        fontSize: 16,
+                      ),
                       onChanged: (_) => setState(() {}),
                       validator: (v) => (v == null || v.trim().isEmpty)
                           ? "Nom obligatoire"
@@ -407,17 +425,22 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
                       value: d.gender.isEmpty ? null : d.gender,
                       decoration: deco("Sexe"),
+                      style: _dropdownTextStyle,
                       items: genders
-                          .map((g) => DropdownMenuItem(
-                        value: g,
-                        child: Text(g),
-                      ))
+                          .map(
+                            (g) => DropdownMenuItem(
+                          value: g,
+                          child: Text(
+                            g,
+                            style: _dropdownTextStyle,
+                          ),
+                        ),
+                      )
                           .toList(),
                       onChanged: _loading
                           ? null
@@ -427,17 +450,22 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
                       value: d.city.isEmpty ? null : d.city,
                       decoration: deco("Ville"),
+                      style: _dropdownTextStyle,
                       items: citiesBF
-                          .map((c) => DropdownMenuItem(
-                        value: c,
-                        child: Text(c),
-                      ))
+                          .map(
+                            (c) => DropdownMenuItem(
+                          value: c,
+                          child: Text(
+                            c,
+                            style: _dropdownTextStyle,
+                          ),
+                        ),
+                      )
                           .toList(),
                       onChanged: _loading
                           ? null
@@ -447,7 +475,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: 360,
                     child: IntlPhoneField(
@@ -461,16 +488,19 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         fontWeight: phoneCtrl.text.trim().isEmpty
                             ? FontWeight.normal
                             : FontWeight.w700,
+                        fontSize: 16,
                       ),
                       dropdownTextStyle: const TextStyle(
                         color: Colors.black87,
-                        fontWeight: FontWeight.normal,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
                       ),
-                      decoration: deco("70 12 34 56").copyWith(
+                      decoration: deco("Téléphone").copyWith(
                         hintText: "70 12 34 56",
                         hintStyle: const TextStyle(
                           color: Colors.black38,
                           fontWeight: FontWeight.normal,
+                          fontSize: 16,
                         ),
                         counterText: "",
                       ),
@@ -490,7 +520,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -504,6 +533,13 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                         horizontal: 14,
                         vertical: 14,
                       ),
+                      textStyle: TextStyle(
+                        color: Colors.black87,
+                        fontWeight: emailCtrl.text.trim().isEmpty
+                            ? FontWeight.normal
+                            : FontWeight.w700,
+                        fontSize: 16,
+                      ),
                       onChanged: (_) => setState(() {}),
                       validator: (v) {
                         final value = (v ?? "").trim();
@@ -514,7 +550,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -527,6 +562,13 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 14,
+                      ),
+                      textStyle: TextStyle(
+                        color: Colors.black87,
+                        fontWeight: pwdCtrl.text.trim().isEmpty
+                            ? FontWeight.normal
+                            : FontWeight.w700,
+                        fontSize: 16,
                       ),
                       suffixIcon: IconButton(
                         onPressed: _loading
@@ -546,7 +588,6 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: 360,
                     child: FasoInput(
@@ -559,6 +600,13 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 14,
+                      ),
+                      textStyle: TextStyle(
+                        color: Colors.black87,
+                        fontWeight: pwd2Ctrl.text.trim().isEmpty
+                            ? FontWeight.normal
+                            : FontWeight.w700,
+                        fontSize: 16,
                       ),
                       suffixIcon: IconButton(
                         onPressed: _loading
@@ -581,30 +629,31 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-
                   SizedBox(
                     width: 360,
                     child: DropdownButtonFormField<String>(
                       value: d.lookingFor.isEmpty ? null : d.lookingFor,
                       decoration: deco("Je recherche"),
+                      style: _dropdownTextStyle,
                       items: lookingForItems
                           .map(
                             (item) => DropdownMenuItem<String>(
                           value: item['value']!,
-                          child: Text(item['label']!),
+                          child: Text(
+                            item['label']!,
+                            style: _dropdownTextStyle,
+                          ),
                         ),
                       )
                           .toList(),
                       onChanged: _loading
                           ? null
                           : (v) => setState(() => d.lookingFor = v ?? ""),
-                      validator: (v) => (v == null || v.isEmpty)
-                          ? "Choix obligatoire"
-                          : null,
+                      validator: (v) =>
+                      (v == null || v.isEmpty) ? "Choix obligatoire" : null,
                     ),
                   ),
                   const SizedBox(height: 18),
-
                   if (!_canGoNext) ...[
                     const Text(
                       "⚠️ Remplis tous les champs obligatoires pour activer “Suivant”.",
@@ -612,12 +661,11 @@ class _SignupStep1ScreenState extends State<SignupStep1Screen> {
                     ),
                     const SizedBox(height: 10),
                   ],
-
                   Center(
                     child: PrimaryButton(
                       text: "Suivant",
                       width: 170,
-                      height: 30,
+                      height: 44,
                       loading: _loading,
                       onPressed: _canGoNext ? _next : null,
                     ),

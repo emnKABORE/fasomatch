@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "640695861238",
+    "project_id": "fasomatch",
+    "storage_bucket": "fasomatch.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:640695861238:android:c24f10e0b6ca9be225d1d7",
+        "android_client_info": {
+          "package_name": "com.example.fasomatch"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBF5puPraCl9liKaeyn0JTIFVJw1H2uN8o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

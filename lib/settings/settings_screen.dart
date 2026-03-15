@@ -7,8 +7,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// ✅ Adapte ces imports si besoin selon ton arborescence
-import '../login_screen.dart';
+import '../admin/admin_deletion_screen.dart';
+import '../admin/admin_kyc_screen.dart';
+import '../admin/admin_reports_screen.dart';
+import '../welcome_screen.dart';
 import 'edit_profile_screen.dart';
 import 'privacy_policy_screen.dart';
 import 'terms_screen.dart';
@@ -36,11 +38,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _loading = true;
   bool _busy = false;
+  bool _isAdmin = false;
+
+  int _pendingKycCount = 0;
+  int _pendingDeletionCount = 0;
+  int _pendingReportsCount = 0;
 
   String _plan = 'gratuit';
   bool _isActive = true;
 
-  // ⚠️ Ces 2 champs sont les mêmes que ceux à utiliser à la 1ère connexion
   bool _biometricEnabled = false;
   String _biometricPreference = 'auto'; // auto | fingerprint | face
 
@@ -74,6 +80,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
           .maybeSingle();
 
       final metadata = user.userMetadata ?? {};
+      final isAdmin = (row?['role'] ?? 'user').toString() == 'admin';
+
+      int kycCount = 0;
+      int deletionCount = 0;
+      int reportsCount = 0;
+
+      if (isAdmin) {
+        final kycRows = await _supabase
+            .from('profiles')
+            .select('id')
+            .eq('verification_status', 'en_attente');
+
+        final deletionRows = await _supabase
+            .from('profiles')
+            .select('id')
+            .eq('deletion_status', 'pending');
+
+        final reportRows = await _supabase
+            .from('user_reports')
+            .select('id')
+            .eq('status', 'open');
+
+        kycCount = List<Map<String, dynamic>>.from(kycRows).length;
+        deletionCount = List<Map<String, dynamic>>.from(deletionRows).length;
+        reportsCount = List<Map<String, dynamic>>.from(reportRows).length;
+      }
 
       setState(() {
         _displayName = (row?['first_name'] ??
@@ -83,14 +115,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'Mon compte')
             .toString();
 
-        _plan = (row?['plan'] ??
-            row?['subscription_plan'] ??
-            widget.currentPlan)
-            .toString();
+        _plan =
+            (row?['plan'] ?? row?['subscription_plan'] ?? widget.currentPlan)
+                .toString();
 
         _isActive = (row?['is_active'] as bool?) ?? true;
+        _isAdmin = isAdmin;
 
-        // ✅ Liaison directe avec le choix fait à la 1ère connexion
+        _pendingKycCount = kycCount;
+        _pendingDeletionCount = deletionCount;
+        _pendingReportsCount = reportsCount;
+
         _biometricEnabled = (row?['biometric_enabled'] as bool?) ?? false;
         _biometricPreference =
             (row?['biometric_preference'] ?? 'auto').toString();
@@ -99,7 +134,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             (row?['verification_status'] ?? 'non_verifie').toString();
         _verificationDocumentType =
             row?['verification_document_type']?.toString();
-        _verificationDocumentUrl = row?['verification_document_url']?.toString();
+        _verificationDocumentUrl =
+            row?['verification_document_url']?.toString();
 
         _avatarUrl = row?['avatar_url']?.toString();
         _photos = _extractPhotos(row?['photos']);
@@ -281,8 +317,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
 
-      // ✅ Si l’utilisateur active depuis les paramètres
-      // on garde sa préférence actuelle si elle existe déjà
       await _saveBiometricConfig(
         enabled: value,
         preference: _biometricPreference,
@@ -401,8 +435,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       setState(() => _busy = true);
 
-      // ✅ Si l’utilisateur choisit une méthode dans les paramètres,
-      // on garde l’état ON/OFF actuel mais on met à jour la préférence.
       await _saveBiometricConfig(
         enabled: _biometricEnabled,
         preference: selected,
@@ -428,9 +460,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         shape:
         RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
         title: Text(
-          nextValue
-              ? "Réactiver mon compte"
-              : "Désactiver mon compte",
+          nextValue ? "Réactiver mon compte" : "Désactiver mon compte",
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
         content: Text(
@@ -497,7 +527,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           style: TextStyle(fontWeight: FontWeight.w900),
         ),
         content: const Text(
-          "Cette action va masquer ton profil immédiatement et enregistrer une demande de suppression.",
+          "Cette action lance une demande de suppression de ton compte FasoMatch. Ton profil sera immédiatement masqué, ton accès sera coupé, et la suppression de tes données sera traitée selon notre politique de confidentialité.",
           style: TextStyle(fontWeight: FontWeight.w600),
         ),
         actions: [
@@ -526,6 +556,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _supabase.from('profiles').update({
         'is_active': false,
         'deletion_requested_at': DateTime.now().toIso8601String(),
+        'deletion_status': 'pending',
+        'deletion_reason': 'user_request',
         'updated_at': DateTime.now().toIso8601String(),
       }).eq('id', user.id);
 
@@ -534,7 +566,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
 
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
             (route) => false,
       );
     } catch (e) {
@@ -553,7 +585,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
 
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
             (route) => false,
       );
     } catch (e) {
@@ -845,12 +877,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     child: child,
   );
 
+  Widget _badge(int count) {
+    if (count <= 0) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFB00020),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      constraints: const BoxConstraints(minWidth: 22),
+      child: Text(
+        count > 99 ? '99+' : '$count',
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w900,
+          fontSize: 11,
+        ),
+      ),
+    );
+  }
+
   Widget _tile({
     required IconData icon,
     required String title,
     required String subtitle,
     required VoidCallback onTap,
     Color? subtitleColor,
+    int badgeCount = 0,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -872,7 +927,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             color: subtitleColor ?? Colors.black54,
           ),
         ),
-        trailing: const Icon(Icons.chevron_right),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (badgeCount > 0) ...[
+              _badge(badgeCount),
+              const SizedBox(width: 8),
+            ],
+            const Icon(Icons.chevron_right),
+          ],
+        ),
         onTap: onTap,
       ),
     );
@@ -1135,7 +1199,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _tile(
                 icon: Icons.delete_forever_outlined,
                 title: "Supprimer mon compte",
-                subtitle: "Droit à l’effacement",
+                subtitle: "Lancer une demande de suppression",
                 onTap: _requestDeleteAccount,
               ),
               _tile(
@@ -1144,6 +1208,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 subtitle: "Se déconnecter de l’application",
                 onTap: _signOut,
               ),
+
+              if (_isAdmin) ...[
+                const SizedBox(height: 12),
+                _sectionTitle("Administration"),
+                _tile(
+                  icon: Icons.admin_panel_settings_outlined,
+                  title: "Vérifications de profils",
+                  subtitle: "Valider ou refuser les demandes KYC",
+                  badgeCount: _pendingKycCount,
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminKycScreen(),
+                      ),
+                    );
+                    await _loadSettings();
+                  },
+                ),
+                _tile(
+                  icon: Icons.person_remove_alt_1_outlined,
+                  title: "Demandes de suppression",
+                  subtitle: "Traiter les demandes de suppression",
+                  badgeCount: _pendingDeletionCount,
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminDeletionScreen(),
+                      ),
+                    );
+                    await _loadSettings();
+                  },
+                ),
+                _tile(
+                  icon: Icons.flag_outlined,
+                  title: "Signalements",
+                  subtitle: "Traiter les signalements utilisateurs",
+                  badgeCount: _pendingReportsCount,
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminReportsScreen(),
+                      ),
+                    );
+                    await _loadSettings();
+                  },
+                ),
+              ],
 
               const SizedBox(height: 12),
               _sectionTitle("Support"),

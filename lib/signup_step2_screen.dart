@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -11,11 +12,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'signup_draft.dart';
 import 'ui/app_colors.dart';
 import 'ui/app_logo.dart';
-import 'ui/primary_button.dart';
 import 'ui/birthdate_picker_field.dart';
 import 'ui/faso_loading_overlay.dart';
-
-import 'biometric_optin_screen.dart';
+import 'ui/primary_button.dart';
 
 class LegalLinks {
   static const privacy =
@@ -32,20 +31,12 @@ class LegalLinks {
 
 Future<void> openUrl(String url) async {
   final uri = Uri.parse(url);
-
-  final ok = await launchUrl(
-    uri,
-    mode: LaunchMode.externalApplication,
-  );
-
-  if (!ok) {
-    throw Exception("Impossible d'ouvrir le lien: $url");
-  }
+  await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
 class SignupStep2Screen extends StatefulWidget {
   final SignupDraft draft;
-  final String? userId;
+  final String userId;
 
   const SignupStep2Screen({
     super.key,
@@ -71,6 +62,16 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
   void initState() {
     super.initState();
     _bioCtrl = TextEditingController(text: widget.draft.bio);
+
+    if (widget.draft.photo1Path != null && widget.draft.photo1Path!.isNotEmpty) {
+      _photo1 = XFile(widget.draft.photo1Path!);
+    }
+    if (widget.draft.photo2Path != null && widget.draft.photo2Path!.isNotEmpty) {
+      _photo2 = XFile(widget.draft.photo2Path!);
+    }
+    if (widget.draft.photo3Path != null && widget.draft.photo3Path!.isNotEmpty) {
+      _photo3 = XFile(widget.draft.photo3Path!);
+    }
   }
 
   @override
@@ -154,8 +155,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       fileOptions: const FileOptions(upsert: true),
     );
 
-    final publicUrl = supabase.storage.from('profile-photos').getPublicUrl(path);
-    return publicUrl;
+    return supabase.storage.from('profile-photos').getPublicUrl(path);
   }
 
   Future<void> _finalizeProfileAfterLogin(String authedUserId) async {
@@ -184,23 +184,24 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       if (photo3Url != null) photo3Url,
     ];
 
-    d.applyPlanDefaults("gratuit");
-
     await supabase.from('profiles').upsert({
       'id': authedUserId,
       'first_name': d.firstName,
+      'last_name': d.lastName,
       'birth_year': d.birthdate!.year,
       'gender': d.gender,
       'looking_for': d.lookingFor,
       'bio': d.bio.isEmpty ? null : d.bio,
       'city': d.city,
-      'interests': null,
+      'interests': <String>[],
       'avatar_url': photo1Url,
       'photos': photoUrls,
       'is_verified': false,
       'plan': 'gratuit',
       'phone': d.phone,
-      'created_at': DateTime.now().toIso8601String(),
+      'is_active': true,
+      'account_status': 'active',
+      'updated_at': DateTime.now().toIso8601String(),
     });
   }
 
@@ -241,12 +242,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       return;
     }
 
-    await _showDialog(
-      title: "Dernière étape",
-      message:
-      "✅ Compte créé.\n\n📩 Va confirmer ton email (regarde aussi tes spams).\n\nDès que c’est confirmé, FasoMatch continue automatiquement ici.",
-      okText: "J’ai compris",
-    );
+    d.bio = _bioCtrl.text.trim();
 
     if (!mounted) return;
     Navigator.pushReplacement(
@@ -254,6 +250,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
       MaterialPageRoute(
         builder: (_) => EmailConfirmWaitScreen(
           draft: widget.draft,
+          userId: widget.userId,
           finalizeProfile: _finalizeProfileAfterLogin,
         ),
       ),
@@ -272,13 +269,10 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
           backgroundColor: AppColors.bg,
           elevation: 0,
           centerTitle: true,
-          toolbarHeight: 120,
-          title: const Padding(
-            padding: EdgeInsets.only(top: 10, bottom: 10),
-            child: AppLogo(size: 80),
-          ),
+          toolbarHeight: 100,
+          title: const AppLogo(size: 80),
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new, color: Colors.black87),
+            icon: const Icon(Icons.arrow_back, color: Colors.black87, size: 28),
             onPressed: isLoading ? null : () => Navigator.pop(context),
           ),
         ),
@@ -314,17 +308,17 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                     runSpacing: 16,
                     children: [
                       _photoBox(
-                        label: "1er photo\n(obligatoire)",
+                        label: "Photo 1\n(obligatoire)",
                         file: _photo1,
                         onTap: isLoading ? null : () => _pickImage(1),
                       ),
                       _photoBox(
-                        label: "2ème photo\n(facultatif)",
+                        label: "Photo 2",
                         file: _photo2,
                         onTap: isLoading ? null : () => _pickImage(2),
                       ),
                       _photoBox(
-                        label: "3ème photo\n(facultatif)",
+                        label: "Photo 3",
                         file: _photo3,
                         onTap: isLoading ? null : () => _pickImage(3),
                       ),
@@ -338,7 +332,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                       minLines: 5,
                       maxLines: 8,
                       decoration: InputDecoration(
-                        hintText: "Centres d’intérêts, loisirs… (facultatif)",
+                        hintText: "Bio (facultatif)",
                         filled: true,
                         fillColor: Colors.white.withOpacity(0.75),
                         border: OutlineInputBorder(
@@ -348,6 +342,13 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                           borderRadius: BorderRadius.circular(10),
                           borderSide:
                           const BorderSide(color: Colors.black54, width: 1.2),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                            color: AppColors.primaryBlue,
+                            width: 1.4,
+                          ),
                         ),
                       ),
                       enabled: !isLoading,
@@ -374,7 +375,7 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
                   const SizedBox(height: 16),
                   Center(
                     child: PrimaryButton(
-                      text: "Créer son compte",
+                      text: "Créer mon compte",
                       width: 220,
                       height: 44,
                       loading: isLoading,
@@ -396,6 +397,39 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
     required XFile? file,
     required VoidCallback? onTap,
   }) {
+    Widget preview;
+
+    if (file == null) {
+      preview = Center(
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      );
+    } else if (kIsWeb) {
+      preview = FutureBuilder<Uint8List>(
+        future: file.readAsBytes(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+          }
+          if (!snapshot.hasData) {
+            return const Center(child: Icon(Icons.broken_image_outlined));
+          }
+          return Image.memory(
+            snapshot.data!,
+            fit: BoxFit.cover,
+          );
+        },
+      );
+    } else {
+      preview = Image.file(
+        File(file.path),
+        fit: BoxFit.cover,
+      );
+    }
+
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -407,56 +441,28 @@ class _SignupStep2ScreenState extends State<SignupStep2Screen> {
           borderRadius: BorderRadius.circular(12),
           color: Colors.white.withOpacity(0.75),
         ),
-        child: file != null
-            ? Stack(
+        child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.network(
-              file.path,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) {
-                return FutureBuilder<Uint8List>(
-                  future: file.readAsBytes(),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasData) {
-                      return Image.memory(
-                        snapshot.data!,
-                        fit: BoxFit.cover,
-                      );
-                    }
-                    return Container(
-                      color: Colors.white,
-                      alignment: Alignment.center,
-                      child: const CircularProgressIndicator(strokeWidth: 2),
-                    );
-                  },
-                );
-              },
-            ),
-            Positioned(
-              right: 6,
-              top: 6,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.55),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.check,
-                  color: Colors.white,
-                  size: 16,
+            preview,
+            if (file != null)
+              Positioned(
+                right: 6,
+                top: 6,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.55),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.check,
+                    color: Colors.white,
+                    size: 16,
+                  ),
                 ),
               ),
-            ),
           ],
-        )
-            : Center(
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
         ),
       ),
     );
@@ -513,11 +519,13 @@ class _LegalConsentText extends StatelessWidget {
 
 class EmailConfirmWaitScreen extends StatefulWidget {
   final SignupDraft draft;
+  final String userId;
   final Future<void> Function(String authedUserId) finalizeProfile;
 
   const EmailConfirmWaitScreen({
     super.key,
     required this.draft,
+    required this.userId,
     required this.finalizeProfile,
   });
 
@@ -528,6 +536,7 @@ class EmailConfirmWaitScreen extends StatefulWidget {
 class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
   Timer? _timer;
   bool _busy = false;
+  bool _resendBusy = false;
   int _ticks = 0;
   String _status = "En attente de confirmation email…";
 
@@ -545,7 +554,10 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
 
   void _startPolling() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _tryAutoLogin());
+    _timer = Timer.periodic(
+      const Duration(seconds: 3),
+          (_) => _tryAutoLogin(),
+    );
   }
 
   Future<void> _tryAutoLogin() async {
@@ -555,18 +567,37 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
     try {
       _ticks++;
 
-      if (_ticks > 80) {
-        setState(() {
-          _status =
-          "Toujours pas confirmé. Vérifie tes spams ou renvoie le mail.";
-        });
-        _busy = false;
+      if (_ticks > 120) {
+        if (mounted) {
+          setState(() {
+            _status =
+            "Toujours pas confirmé. Vérifie tes spams ou renvoie le mail.";
+          });
+        }
         return;
       }
 
-      setState(() => _status = "Vérification…");
+      if (mounted) {
+        setState(() => _status = "Vérification de la confirmation…");
+      }
 
       final supabase = Supabase.instance.client;
+
+      final currentUser = supabase.auth.currentUser;
+      if (currentUser != null && currentUser.emailConfirmedAt != null) {
+        _timer?.cancel();
+
+        if (mounted) {
+          setState(() => _status = "Confirmation détectée ✅ Finalisation du profil…");
+        }
+
+        await widget.finalizeProfile(currentUser.id);
+
+        if (!mounted) return;
+
+        Navigator.pushNamedAndRemoveUntil(context, '/swipe', (_) => false);
+        return;
+      }
 
       final res = await supabase.auth.signInWithPassword(
         email: widget.draft.email.trim(),
@@ -575,52 +606,76 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
 
       final user = res.user;
       if (user == null) {
-        setState(() => _status = "En attente de confirmation email…");
-        _busy = false;
+        if (mounted) {
+          setState(() => _status = "En attente de confirmation email…");
+        }
         return;
       }
 
       final confirmed = user.emailConfirmedAt != null;
       if (!confirmed) {
-        setState(() => _status = "Email pas encore confirmé…");
-        _busy = false;
+        if (mounted) {
+          setState(() => _status = "Email pas encore confirmé…");
+        }
+        await supabase.auth.signOut();
         return;
       }
 
       _timer?.cancel();
-      setState(() => _status = "Confirmation détectée ✅ Finalisation du profil…");
+
+      if (mounted) {
+        setState(() => _status = "Confirmation détectée ✅ Finalisation du profil…");
+      }
 
       await widget.finalizeProfile(user.id);
 
       if (!mounted) return;
 
-      await showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text("Bienvenue sur FasoMatch 🎉"),
-          content: const Text(
-            "Ton email est confirmé ✅\n\nOn va te proposer l’empreinte / FaceID pour te connecter plus vite la prochaine fois.",
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Continuer"),
-            ),
-          ],
-        ),
-      );
-
-      if (!mounted) return;
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const BiometricOptinScreen()),
-      );
-    } catch (_) {
-      setState(() => _status = "En attente de confirmation email…");
+      Navigator.pushNamedAndRemoveUntil(context, '/swipe', (_) => false);
+    } catch (e) {
+      debugPrint('Auto login confirm error: $e');
+      if (mounted) {
+        setState(() => _status = "En attente de confirmation email…");
+      }
     } finally {
       _busy = false;
     }
+  }
+
+  Future<void> _resendEmail() async {
+    if (_resendBusy) return;
+
+    setState(() => _resendBusy = true);
+
+    try {
+      await Supabase.instance.client.auth.resend(
+        type: OtpType.signup,
+        email: widget.draft.email.trim(),
+        emailRedirectTo: kIsWeb
+            ? "${Uri.base.origin}/auth/callback"
+            : "fasomatch://auth/callback",
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Email renvoyé. Vérifie ta boîte mail."),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Impossible de renvoyer l’email : $e"),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _resendBusy = false);
+    }
+  }
+
+  Future<void> _manualCheck() async {
+    await _tryAutoLogin();
   }
 
   @override
@@ -631,11 +686,9 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
         backgroundColor: AppColors.bg,
         elevation: 0,
         centerTitle: true,
-        toolbarHeight: 110,
-        title: const Padding(
-          padding: EdgeInsets.only(top: 10, bottom: 10),
-          child: AppLogo(size: 70),
-        ),
+        toolbarHeight: 100,
+        leading: const SizedBox.shrink(),
+        title: const AppLogo(size: 80),
       ),
       body: Center(
         child: ConstrainedBox(
@@ -647,16 +700,57 @@ class _EmailConfirmWaitScreenState extends State<EmailConfirmWaitScreen> {
               children: [
                 const Icon(Icons.mark_email_read_outlined, size: 54),
                 const SizedBox(height: 14),
+                const Text(
+                  "Confirme ton email",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 20,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  widget.draft.email.trim(),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 14),
                 Text(
                   _status,
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 Text(
-                  "📩 Confirme ton email puis reviens ici.\nDès que c’est confirmé, FasoMatch continue tout seul.",
+                  "📩 Va confirmer ton email dans ta boîte de réception.\n\nSi tu confirmes depuis ce téléphone, FasoMatch pourra s’ouvrir automatiquement.\nSinon, reviens ici : la validation sera détectée automatiquement.",
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.black.withOpacity(0.65)),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: 260,
+                  height: 44,
+                  child: OutlinedButton(
+                    onPressed: _resendBusy ? null : _resendEmail,
+                    child: Text(
+                      _resendBusy
+                          ? "Envoi..."
+                          : "Email non reçu ? Renvoyer",
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: 220,
+                  height: 44,
+                  child: ElevatedButton(
+                    onPressed: _manualCheck,
+                    child: const Text(
+                      "J’ai déjà confirmé",
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
                 ),
               ],
             ),
